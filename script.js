@@ -11,11 +11,9 @@ const parentControls = document.getElementById('parent-controls');
 const btnDim = document.getElementById('btn-dim');
 const dimOverlay = document.getElementById('dim-overlay');
 const btnStop = document.getElementById('btn-stop');
-const audioVisualizer = document.getElementById('audio-visualizer');
 const btnListen = document.getElementById('btn-listen');
 const volumeControl = document.getElementById('volume-control');
 const volumeValueDisplay = document.getElementById('volume-value');
-const dbMeterFill = document.getElementById('db-level');
 const audioStatus = document.getElementById('audio-status');
 const vadStatus = document.getElementById('vad-status');
 const vadSensitivity = document.getElementById('vad-sensitivity');
@@ -290,8 +288,8 @@ function setupVAD(stream) {
     const vadStream = new MediaStream([vadTrack]);
     const source = audioCtx.createMediaStreamSource(vadStream);
     
-    const analyser = audioCtx.createAnalyser();
-    analyser.fftSize = 512;
+    analyser = audioCtx.createAnalyser();
+    analyser.fftSize = 256;
     source.connect(analyser);
     
     const bufferLength = analyser.frequencyBinCount;
@@ -300,6 +298,8 @@ function setupVAD(stream) {
     // Start loop
     if (vadInterval) clearInterval(vadInterval);
     
+    visualize('child');
+
     let logCounter = 0;
     vadInterval = setInterval(() => {
         if (audioCtx.state === 'suspended') {
@@ -316,17 +316,15 @@ function setupVAD(stream) {
         const rms = Math.sqrt(sum / bufferLength);
         
         const sliderVal = parseInt(vadSensitivity.value);
-        // Map 0-100 to 60-5 (High sens = low threshold)
         const threshold = 60 - (sliderVal * 0.55); 
         
         const now = Date.now();
-        const audioTrack = stream.getAudioTracks()[0]; // The transmission track
+        const audioTrack = stream.getAudioTracks()[0];
         
-        // Log every 5 seconds
-        logCounter++;
         if (logCounter % 50 === 0) {
             console.log(`VAD: RMS=${rms.toFixed(1)}, Threshold=${threshold.toFixed(1)}, Active=${isTransmitting}`);
         }
+        logCounter++;
 
         if (rms > threshold) {
             lastNoiseTime = now;
@@ -347,7 +345,7 @@ function setupVAD(stream) {
             }
         }
         
-    }, 100); // Check every 100ms
+    }, 100);
 }
 
 function connectToParent() {
@@ -439,7 +437,7 @@ function handleIncomingCall(call) {
         console.log('Call closed');
         updateStatus(true); // Still connected to server, just lost call
         audioStatus.textContent = "Signal Lost. Waiting for Child...";
-        stopVisualizer();
+        stopVisualizer('parent');
         statusIndicator.style.backgroundColor = '#ffcc00'; // Yellow/Orange for waiting
     });
 
@@ -466,22 +464,18 @@ function playAudio(stream) {
 
     const source = audioCtx.createMediaStreamSource(stream);
     
-    // Setup Analyser
     analyser = audioCtx.createAnalyser();
-    analyser.fftSize = 256; // Better resolution for DB meter
+    analyser.fftSize = 256;
     
-    // Setup Gain Node for amplification
     gainNode = audioCtx.createGain();
     const initialVolume = volumeControl ? parseInt(volumeControl.value) : 100;
     gainNode.gain.setValueAtTime(initialVolume / 100, audioCtx.currentTime);
     
-    // Routing: source -> analyser -> gainNode -> destination
-    // This way analyser shows input level even if gain is low
     source.connect(analyser);
     analyser.connect(gainNode);
     gainNode.connect(audioCtx.destination);
 
-    visualize();
+    visualize('parent');
 
     if (audioCtx.state === 'suspended') {
         audioStatus.textContent = "Tap 'Start Listening' to hear audio";
@@ -511,12 +505,13 @@ function resumeAudioContext() {
 }
 
 // Visualizer
-function visualize() {
+function visualize(prefix) {
     if (!analyser) return;
 
     const bufferLength = analyser.frequencyBinCount;
     const dataArray = new Uint8Array(bufferLength);
-    const bars = document.querySelectorAll('.bar');
+    const bars = document.querySelectorAll(`#${prefix}-visualizer .bar`);
+    const dbMeterFill = document.getElementById(`${prefix}-db-level`);
 
     function draw() {
         if (!analyser) return;
@@ -524,29 +519,22 @@ function visualize() {
         requestAnimationFrame(draw);
         analyser.getByteFrequencyData(dataArray);
 
-        // Calculate Average for DB Meter
         let sum = 0;
         for (let i = 0; i < bufferLength; i++) {
             sum += dataArray[i];
         }
         const average = sum / bufferLength;
         
-        // Map average to percentage (0-255 -> 0-100%)
-        // Let's use a non-linear mapping for better "decibel meter" feel
-        // 0-255 range. Speaking is usually around 100-150.
         const levelPercent = Math.min(100, (average / 150) * 100);
         if (dbMeterFill) {
             dbMeterFill.style.width = `${levelPercent}%`;
             
-            // Color feedback on meter
             if (levelPercent > 85) dbMeterFill.style.backgroundColor = '#ff5252';
             else if (levelPercent > 60) dbMeterFill.style.backgroundColor = '#ffcc00';
             else dbMeterFill.style.backgroundColor = '#69f0ae';
         }
 
-        // Small bar visualizer
         for (let i = 0; i < bars.length; i++) {
-            // Sample a range of frequencies
             const startIdx = Math.floor(i * (bufferLength / bars.length));
             let maxVal = 0;
             for(let j=0; j < (bufferLength/bars.length); j++) {
@@ -566,12 +554,13 @@ function visualize() {
     draw();
 }
 
-function stopVisualizer() {
-    const bars = document.querySelectorAll('.bar');
+function stopVisualizer(prefix) {
+    const bars = document.querySelectorAll(`#${prefix}-visualizer .bar`);
     bars.forEach(bar => {
         bar.style.height = '5px';
         bar.style.backgroundColor = '#64ffda';
     });
+    const dbMeterFill = document.getElementById(`${prefix}-db-level`);
     if (dbMeterFill) {
         dbMeterFill.style.width = '0%';
     }

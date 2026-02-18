@@ -47,6 +47,21 @@
                 <div id="child-controls" class="hidden">
                     <div id="vad-status" class="status-message">Microphone Active</div>
                     
+                    <!-- Unified Visualizer (Same as Parent) -->
+                    <div class="visualizer-container">
+                        <div id="child-db-meter" class="meter-background">
+                            <div id="child-db-level" class="meter-fill"></div>
+                        </div>
+                    </div>
+                    
+                    <div id="child-visualizer" class="audio-visualizer">
+                        <div class="bar"></div>
+                        <div class="bar"></div>
+                        <div class="bar"></div>
+                        <div class="bar"></div>
+                        <div class="bar"></div>
+                    </div>
+
                     <div class="control-group">
                         <label for="vad-sensitivity">Sensitivity: <span id="vad-value">Medium</span></label>
                         <input type="range" id="vad-sensitivity" min="0" max="100" value="50">
@@ -58,18 +73,12 @@
                 <!-- Parent View Elements -->
                 <div id="parent-controls" class="hidden">
                     <div class="visualizer-container">
-                        <div id="db-meter" class="meter-background">
-                            <div id="db-level" class="meter-fill"></div>
-                            <div class="meter-labels">
-                                <span>-60dB</span>
-                                <span>-30dB</span>
-                                <span>-10dB</span>
-                                <span>0dB</span>
-                            </div>
+                        <div id="parent-db-meter" class="meter-background">
+                            <div id="parent-db-level" class="meter-fill"></div>
                         </div>
                     </div>
                     
-                    <div id="audio-visualizer">
+                    <div id="parent-visualizer" class="audio-visualizer">
                         <div class="bar"></div>
                         <div class="bar"></div>
                         <div class="bar"></div>

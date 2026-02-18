@@ -153,30 +153,27 @@ header {
 
 /* Visualizer */
 .visualizer-container {
-    height: 60px;
-    display: flex;
-    flex-direction: column;
-    justify-content: center;
-    align-items: center;
-    gap: 10px;
-    margin: 20px 0;
+    width: 100%;
+    margin: 10px 0;
 }
 
-#audio-visualizer {
+.audio-visualizer {
     display: flex;
     justify-content: center;
     align-items: flex-end;
     gap: 5px;
     height: 40px;
+    margin-bottom: 20px;
 }
 
 .meter-background {
     width: 100%;
-    height: 20px;
+    height: 12px;
     background-color: var(--secondary-color);
-    border-radius: 10px;
+    border-radius: 6px;
     position: relative;
     overflow: hidden;
+    margin-bottom: 10px;
 }
 
 .meter-fill {
@@ -186,27 +183,12 @@ header {
     transition: width 0.1s ease;
 }
 
-.meter-labels {
-    position: absolute;
-    top: 0;
-    left: 0;
-    width: 100%;
-    height: 100%;
-    display: flex;
-    justify-content: space-between;
-    padding: 0 10px;
-    align-items: center;
-    font-size: 0.6rem;
-    color: rgba(255, 255, 255, 0.5);
-    pointer-events: none;
-}
-
 .bar {
     width: 15px;
     background-color: var(--primary-color);
     height: 5px;
     border-radius: 3px;
-    transition: height 0.1s ease;
+    transition: height 0.05s ease;
 }
 
 /* Dim Overlay */
