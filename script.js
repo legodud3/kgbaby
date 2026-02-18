@@ -35,11 +35,41 @@ let reconnectInterval = null;
 let vadInterval = null;
 let lastNoiseTime = 0;
 let isTransmitting = true;
+let vadTrack = null;
+let pendingRemoteStream = null;
+let audioUnlocked = false;
+let visualizerRafId = null;
+let visualizerActive = false;
+let statsInterval = null;
+let statsLoopRunning = false;
+let lastStats = null;
+let lastAudioEnergy = null;
+let lastAudioEnergyTs = null;
+let childRetryTimeout = null;
+let childRetryDelay = 3000;
+let debugPanel = null;
+let latestNetworkLabel = 'Network: Unknown';
 
 // Constants
+const MAX_LOG_ENTRIES = 200;
+const STATS_INTERVAL_MS = 2500;
+const SILENCE_WARN_MS = 12000;
+const BITRATE_LEVELS = [32000, 48000, 64000];
+const BITRATE_DEFAULT_INDEX = 2;
+const BITRATE_STEP_DOWN_AFTER = 3; // consecutive bad intervals
+const BITRATE_STEP_UP_AFTER = 4; // consecutive good intervals
+
+const ICE_SERVERS = [
+    { urls: ['stun:stun.l.google.com:19302', 'stun:stun1.l.google.com:19302'] },
+    { urls: ['stun:stun2.l.google.com:19302', 'stun:stun3.l.google.com:19302'] }
+];
+
 const PEER_CONFIG = {
     debug: 2,
-    secure: true
+    secure: true,
+    config: {
+        iceServers: ICE_SERVERS
+    }
 };
 const VAD_HOLD_TIME = 2000; // ms to keep mic open after noise stops
 
@@ -55,6 +85,9 @@ function log(msg, isError = false) {
         p.style.borderBottom = '1px solid #333';
         p.style.padding = '2px 0';
         debugLog.appendChild(p);
+        while (debugLog.children.length > MAX_LOG_ENTRIES) {
+            debugLog.removeChild(debugLog.firstChild);
+        }
         debugLog.scrollTop = debugLog.scrollHeight;
     }
 }
@@ -86,6 +119,11 @@ if(volumeControl) {
 // Initialization
 async function startSession(selectedRole) {
     try {
+        configureTurnIfPresent();
+        ensureDebugPanel();
+        audioUnlocked = false;
+        pendingRemoteStream = null;
+
         const roomName = roomIdInput.value.trim();
         if (!roomName) {
             alert('Please enter a Room Name');
@@ -154,9 +192,13 @@ function switchToMonitor() {
 function stopSession() {
     if (peer) peer.destroy();
     if (localStream) localStream.getTracks().forEach(track => track.stop());
+    if (vadTrack) vadTrack.stop();
     if (wakeLock) wakeLock.release();
     if (reconnectInterval) clearInterval(reconnectInterval);
     if (vadInterval) clearInterval(vadInterval);
+    if (statsInterval) clearInterval(statsInterval);
+    stopVisualizer();
+    teardownAudioGraph();
     if (audioCtx) audioCtx.close();
     
     location.reload();
@@ -210,8 +252,6 @@ function getPeerId(r) {
 }
 
 // --- CHILD LOGIC ---
-let childRetryInterval = null;
-
 function initChild() {
     const myId = `babymonitor-${roomId}-child`;
     log(`Creating Peer: ${myId}...`);
@@ -223,6 +263,7 @@ function initChild() {
         log('Peer Open. ID: ' + id, false);
         switchToMonitor();
         updateStatus(true); // Connected to signaling server
+        resetChildRetry();
         startStreaming();
     });
 
@@ -284,7 +325,8 @@ function setupVAD(stream) {
     }
     
     // Clone the track for VAD so we can still analyze even when transmission is disabled
-    const vadTrack = stream.getAudioTracks()[0].clone();
+    if (vadTrack) vadTrack.stop();
+    vadTrack = stream.getAudioTracks()[0].clone();
     const vadStream = new MediaStream([vadTrack]);
     const source = audioCtx.createMediaStreamSource(vadStream);
     
@@ -358,26 +400,38 @@ function connectToParent() {
     
     const call = peer.call(targetId, localStream);
     currentCall = call;
+    attachCallConnectionListeners(call, 'child');
+    startStatsLoop(call, 'outbound');
 
     call.on('close', () => {
         log('Call lost/closed. Retrying...', true);
+        if (statsInterval) clearInterval(statsInterval);
         retryConnection();
     });
 
     call.on('error', (err) => {
         console.error('Call error:', err);
         log(`Call Error: ${err.type}`, true);
+        if (statsInterval) clearInterval(statsInterval);
         retryConnection();
     });
 }
 
 function retryConnection() {
-    if (childRetryInterval) return; // Already retrying
-    
-    childRetryInterval = setTimeout(() => {
-        childRetryInterval = null;
+    if (childRetryTimeout) return; // Already retrying
+    const delay = childRetryDelay;
+    log(`Reconnecting in ${Math.round(delay / 1000)}s...`, false);
+    childRetryTimeout = setTimeout(() => {
+        childRetryTimeout = null;
         connectToParent();
-    }, 3000);
+        childRetryDelay = Math.min(childRetryDelay * 2, 30000);
+    }, delay);
+}
+
+function resetChildRetry() {
+    if (childRetryTimeout) clearTimeout(childRetryTimeout);
+    childRetryTimeout = null;
+    childRetryDelay = 3000;
 }
 
 // --- PARENT LOGIC ---
@@ -393,6 +447,7 @@ function initParent() {
         switchToMonitor();
         updateStatus(true); 
         audioStatus.textContent = "Waiting for Child unit...";
+        btnListen.style.display = 'none';
     });
 
     peer.on('call', (call) => {
@@ -424,72 +479,82 @@ function handleIncomingCall(call) {
         currentCall.close();
     }
     currentCall = call;
+    attachCallConnectionListeners(call, 'parent');
+    startStatsLoop(call, 'inbound');
     
     call.on('stream', (remoteStream) => {
         console.log('Stream received');
-        playAudio(remoteStream);
-        updateStatus(true, 'active'); // Active connection
-        audioStatus.textContent = "Audio Connected";
-        statusIndicator.style.backgroundColor = '#69f0ae'; // Bright Green
+        pendingRemoteStream = remoteStream;
+        updateStatus(true, 'active');
+        statusIndicator.style.backgroundColor = '#69f0ae';
+        if (audioUnlocked) {
+            startPlayback(remoteStream);
+        } else {
+            audioStatus.textContent = "Tap 'Start Listening' to hear audio";
+            btnListen.style.display = 'block';
+        }
     });
 
     call.on('close', () => {
         console.log('Call closed');
         updateStatus(true); // Still connected to server, just lost call
         audioStatus.textContent = "Signal Lost. Waiting for Child...";
-        stopVisualizer('parent');
+        stopVisualizer();
         statusIndicator.style.backgroundColor = '#ffcc00'; // Yellow/Orange for waiting
+        pendingRemoteStream = null;
+        if (statsInterval) clearInterval(statsInterval);
     });
 
     call.on('error', (err) => {
         console.error('Call error:', err);
+        if (statsInterval) clearInterval(statsInterval);
     });
 }
 
 // Audio Handling
-function playAudio(stream) {
+function startPlayback(stream) {
     const remoteAudio = document.getElementById('remote-audio');
-    if (remoteAudio) {
-        remoteAudio.srcObject = stream;
-        remoteAudio.play().catch(err => {
-            console.warn('Auto-play blocked, waiting for user interaction:', err);
-            btnListen.style.display = 'block';
-            audioStatus.textContent = "Tap 'Start Listening' to hear audio";
-        });
-    }
+    if (!remoteAudio) return;
+
+    pendingRemoteStream = stream;
+    remoteAudio.srcObject = stream;
+    remoteAudio.muted = false;
 
     if (!audioCtx) {
         audioCtx = new (window.AudioContext || window.webkitAudioContext)();
     }
 
+    teardownAudioGraph();
     const source = audioCtx.createMediaStreamSource(stream);
-    
     analyser = audioCtx.createAnalyser();
     analyser.fftSize = 256;
-    
     gainNode = audioCtx.createGain();
     const initialVolume = volumeControl ? parseInt(volumeControl.value) : 100;
     gainNode.gain.setValueAtTime(initialVolume / 100, audioCtx.currentTime);
-    
     source.connect(analyser);
     analyser.connect(gainNode);
     gainNode.connect(audioCtx.destination);
-
     visualize('parent');
 
     if (audioCtx.state === 'suspended') {
+        audioCtx.resume();
+    }
+
+    remoteAudio.play().then(() => {
+        btnListen.style.display = 'none';
+        audioStatus.textContent = "Audio Connected";
+    }).catch(err => {
+        console.warn('Audio play blocked:', err);
         audioStatus.textContent = "Tap 'Start Listening' to hear audio";
         btnListen.style.display = 'block';
-    } else {
-        if (remoteAudio && !remoteAudio.paused) {
-            btnListen.style.display = 'none';
-        }
-    }
+    });
 }
 
 function resumeAudioContext() {
+    audioUnlocked = true;
     const remoteAudio = document.getElementById('remote-audio');
     if (remoteAudio) {
+        remoteAudio.muted = false;
         remoteAudio.play().catch(e => console.error('Audio play failed:', e));
     }
 
@@ -502,6 +567,10 @@ function resumeAudioContext() {
         btnListen.style.display = 'none';
         audioStatus.textContent = "Audio Connected";
     }
+
+    if (pendingRemoteStream) {
+        startPlayback(pendingRemoteStream);
+    }
 }
 
 // Visualizer
@@ -513,10 +582,10 @@ function visualize(prefix) {
     const bars = document.querySelectorAll(`#${prefix}-visualizer .bar`);
     const dbMeterFill = document.getElementById(`${prefix}-db-level`);
 
+    visualizerActive = true;
     function draw() {
-        if (!analyser) return;
-        
-        requestAnimationFrame(draw);
+        if (!analyser || !visualizerActive) return;
+        visualizerRafId = requestAnimationFrame(draw);
         analyser.getByteFrequencyData(dataArray);
 
         let sum = 0;
@@ -554,16 +623,20 @@ function visualize(prefix) {
     draw();
 }
 
-function stopVisualizer(prefix) {
-    const bars = document.querySelectorAll(`#${prefix}-visualizer .bar`);
-    bars.forEach(bar => {
+function stopVisualizer() {
+    visualizerActive = false;
+    if (visualizerRafId) cancelAnimationFrame(visualizerRafId);
+    visualizerRafId = null;
+
+    const allBars = document.querySelectorAll('.audio-visualizer .bar');
+    allBars.forEach(bar => {
         bar.style.height = '5px';
         bar.style.backgroundColor = '#64ffda';
     });
-    const dbMeterFill = document.getElementById(`${prefix}-db-level`);
-    if (dbMeterFill) {
-        dbMeterFill.style.width = '0%';
-    }
+    const allMeters = document.querySelectorAll('.meter-fill');
+    allMeters.forEach(meter => {
+        meter.style.width = '0%';
+    });
 }
 
 function updateStatus(isConnected, type = 'server') {
@@ -573,5 +646,187 @@ function updateStatus(isConnected, type = 'server') {
     } else {
         statusIndicator.classList.add('disconnected');
         statusIndicator.classList.remove('connected');
+    }
+}
+
+function teardownAudioGraph() {
+    if (analyser) {
+        try { analyser.disconnect(); } catch (e) {}
+    }
+    if (gainNode) {
+        try { gainNode.disconnect(); } catch (e) {}
+    }
+    analyser = null;
+    gainNode = null;
+}
+
+function ensureDebugPanel() {
+    const urlParams = new URLSearchParams(window.location.search);
+    const debugEnabled = urlParams.get('debug') === '1';
+    if (!debugEnabled || !monitorScreen || debugPanel) return;
+
+    debugPanel = document.createElement('div');
+    debugPanel.id = 'debug-panel';
+    debugPanel.textContent = 'Debug: Initializing...';
+    monitorScreen.appendChild(debugPanel);
+}
+
+function updateDebugPanel(lines) {
+    if (!debugPanel) return;
+    debugPanel.textContent = lines.join(' | ');
+}
+
+function configureTurnIfPresent() {
+    if (!window.TURN_CONFIG) return;
+    const turn = window.TURN_CONFIG;
+    if (!turn.urls) return;
+    PEER_CONFIG.config.iceServers = [
+        ...ICE_SERVERS,
+        { urls: turn.urls, username: turn.username, credential: turn.credential }
+    ];
+}
+
+function attachCallConnectionListeners(call, roleLabel) {
+    if (!call || !call.peerConnection) return;
+    const pc = call.peerConnection;
+    pc.oniceconnectionstatechange = () => {
+        const state = pc.iceConnectionState;
+        log(`ICE state: ${state}`, state === 'failed');
+        if (state === 'failed' || state === 'disconnected') {
+            audioStatus.textContent = "Connection unstable. Reconnecting...";
+            if (roleLabel === 'child') {
+                retryConnection();
+            }
+        }
+    };
+    pc.onconnectionstatechange = () => {
+        const state = pc.connectionState;
+        log(`Connection state: ${state}`, state === 'failed');
+        if (state === 'failed') {
+            audioStatus.textContent = "Connection failed. Reconnecting...";
+            if (roleLabel === 'child') {
+                retryConnection();
+            }
+        }
+    };
+}
+
+function startStatsLoop(call, direction) {
+    if (!call || !call.peerConnection) return;
+    if (statsInterval) clearInterval(statsInterval);
+    if (statsLoopRunning) statsLoopRunning = false;
+    lastStats = null;
+    lastAudioEnergy = null;
+    lastAudioEnergyTs = null;
+    let badCount = 0;
+    let goodCount = 0;
+    let bitrateIndex = BITRATE_DEFAULT_INDEX;
+
+    statsInterval = setInterval(async () => {
+        if (statsLoopRunning) return;
+        statsLoopRunning = true;
+        try {
+            if (!call.peerConnection) return;
+            const stats = await call.peerConnection.getStats(null);
+            let outbound = null;
+            let inbound = null;
+            let candidatePair = null;
+
+            stats.forEach(report => {
+                if (report.type === 'outbound-rtp' && report.kind === 'audio') outbound = report;
+                if (report.type === 'inbound-rtp' && report.kind === 'audio') inbound = report;
+                if (report.type === 'candidate-pair' && report.state === 'succeeded' && report.selected) candidatePair = report;
+            });
+
+            const now = Date.now();
+            let bitrate = null;
+            let rtt = candidatePair ? candidatePair.currentRoundTripTime : null;
+            let jitter = inbound ? inbound.jitter : null;
+            let packetsLost = inbound ? inbound.packetsLost : null;
+            let packetsReceived = inbound ? inbound.packetsReceived : null;
+            let bytes = direction === 'outbound' ? outbound?.bytesSent : inbound?.bytesReceived;
+
+            if (lastStats && bytes != null) {
+                const timeDelta = (now - lastStats.timeMs) / 1000;
+                const bytesDelta = bytes - lastStats.bytes;
+                if (timeDelta > 0 && bytesDelta >= 0) {
+                    bitrate = Math.round((bytesDelta * 8) / timeDelta);
+                }
+            }
+
+            if (bytes != null) lastStats = { timeMs: now, bytes };
+
+            const lossRatio = packetsReceived ? packetsLost / Math.max(1, packetsReceived + packetsLost) : 0;
+            const isBad = (lossRatio > 0.05) || (rtt != null && rtt > 0.35);
+            if (isBad) {
+                badCount += 1;
+                goodCount = 0;
+            } else {
+                goodCount += 1;
+                badCount = 0;
+            }
+
+            if (direction === 'outbound') {
+                if (badCount >= BITRATE_STEP_DOWN_AFTER && bitrateIndex > 0) {
+                    bitrateIndex -= 1;
+                    applyMaxBitrate(call.peerConnection, BITRATE_LEVELS[bitrateIndex]);
+                    badCount = 0;
+                }
+                if (goodCount >= BITRATE_STEP_UP_AFTER && bitrateIndex < BITRATE_LEVELS.length - 1) {
+                    bitrateIndex += 1;
+                    applyMaxBitrate(call.peerConnection, BITRATE_LEVELS[bitrateIndex]);
+                    goodCount = 0;
+                }
+            }
+
+            latestNetworkLabel = isBad ? 'Network: Poor' : 'Network: Good';
+
+            if (inbound) {
+                const totalEnergy = inbound.totalAudioEnergy;
+                const totalSamples = inbound.totalSamplesReceived;
+                const remoteAudio = document.getElementById('remote-audio');
+                if (totalEnergy != null && totalSamples != null) {
+                    if (lastAudioEnergy != null) {
+                        const energyDelta = totalEnergy - lastAudioEnergy;
+                        if (energyDelta < 0.0001 && (now - lastAudioEnergyTs) > SILENCE_WARN_MS) {
+                            const needsUnlock = (audioCtx && audioCtx.state === 'suspended') || (remoteAudio && remoteAudio.paused) || (remoteAudio && remoteAudio.muted);
+                            if (needsUnlock) {
+                                audioStatus.textContent = "Tap 'Start Listening' to resume audio";
+                                btnListen.style.display = 'block';
+                            }
+                        } else {
+                            lastAudioEnergyTs = now;
+                        }
+                    } else {
+                        lastAudioEnergyTs = now;
+                    }
+                    lastAudioEnergy = totalEnergy;
+                }
+            }
+
+            updateDebugPanel([
+                latestNetworkLabel,
+                bitrate ? `Bitrate: ${(bitrate / 1000).toFixed(1)}kbps` : 'Bitrate: n/a',
+                rtt != null ? `RTT: ${(rtt * 1000).toFixed(0)}ms` : 'RTT: n/a',
+                jitter != null ? `Jitter: ${(jitter * 1000).toFixed(0)}ms` : 'Jitter: n/a',
+                packetsLost != null ? `Loss: ${packetsLost}` : 'Loss: n/a'
+            ]);
+        } finally {
+            statsLoopRunning = false;
+        }
+    }, STATS_INTERVAL_MS);
+}
+
+function applyMaxBitrate(peerConnection, maxBitrate) {
+    try {
+        const sender = peerConnection.getSenders().find(s => s.track && s.track.kind === 'audio');
+        if (!sender) return;
+        const parameters = sender.getParameters();
+        if (!parameters.encodings) parameters.encodings = [{}];
+        parameters.encodings[0].maxBitrate = maxBitrate;
+        sender.setParameters(parameters);
+        log(`Set max bitrate to ${Math.round(maxBitrate / 1000)}kbps`, false);
+    } catch (e) {
+        console.warn('Failed to set max bitrate', e);
     }
 }
