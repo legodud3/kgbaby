@@ -10,6 +10,7 @@ A secure, zero-latency audio monitor that works over your local network using We
 - **Smart Audio**:
     - **Child Unit**: Noise suppression and auto-gain (hears whispers, ignores fans).
     - **Parent Unit**: Visual audio meter to see noise even when muted.
+- **Last Cry Indicator**: Parent shows “Last cry” based on sustained noise detection.
 - **Reliability**: Auto-reconnection if Wi-Fi drops.
 
 ## How to Use
@@ -29,6 +30,40 @@ A secure, zero-latency audio monitor that works over your local network using We
    - **Child Unit**: Tap "Start". Allow microphone access. Tap "Dim Screen" to save battery.
    - **Parent Unit**: Tap "Start". Wait for the status to turn **Green**. 
    - If audio doesn't play automatically, tap "Start Listening".
+
+## Tuning Cry Detection
+
+Adjust cry sensitivity in `cry-config.js`:
+
+```js
+window.CRY_CONFIG = {
+  sustainedSeconds: 1.5,        // How long sound must stay above threshold
+  minDbAboveNoise: 12,          // dB above rolling noise floor
+  cooldownSeconds: 10,          // Minimum time between cry events
+  noiseFloorWindowSeconds: 8,   // Rolling window for noise floor tracking
+  noiseFloorUpdateMarginDb: 3   // Update floor only when near it
+};
+```
+
+## Debug Overlay
+
+Append `?debug=1` to the URL to see live network stats (bitrate, RTT, jitter, loss).
+
+## Optional TURN (Hard Networks)
+
+If direct P2P fails on certain networks, you can supply TURN credentials:
+
+```html
+<script>
+  window.TURN_CONFIG = {
+    urls: "turn:your.turn.server:3478",
+    username: "user",
+    credential: "pass"
+  };
+</script>
+```
+
+TURN relays audio when direct connections are blocked. It requires a TURN server and usually incurs bandwidth costs.
 
 ## Requirements
 

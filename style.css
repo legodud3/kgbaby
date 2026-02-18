@@ -125,6 +125,18 @@ header {
     margin-bottom: 20px;
 }
 
+.header-left {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    align-items: flex-start;
+}
+
+.last-cry {
+    font-size: 0.85rem;
+    color: #9e9e9e;
+}
+
 .status-indicator {
     width: 12px;
     height: 12px;
@@ -154,23 +166,14 @@ header {
 /* Visualizer */
 .visualizer-container {
     width: 100%;
-    margin: 10px 0;
-}
-
-.audio-visualizer {
-    display: flex;
-    justify-content: center;
-    align-items: flex-end;
-    gap: 5px;
-    height: 40px;
-    margin-bottom: 20px;
+    margin: 16px 0 24px;
 }
 
 .meter-background {
     width: 100%;
-    height: 12px;
+    height: 18px;
     background-color: var(--secondary-color);
-    border-radius: 6px;
+    border-radius: 9px;
     position: relative;
     overflow: hidden;
     margin-bottom: 10px;
@@ -181,14 +184,6 @@ header {
     width: 0%;
     background: linear-gradient(to right, #69f0ae, #ffcc00, #ff5252);
     transition: width 0.1s ease;
-}
-
-.bar {
-    width: 15px;
-    background-color: var(--primary-color);
-    height: 5px;
-    border-radius: 3px;
-    transition: height 0.05s ease;
 }
 
 /* Dim Overlay */
@@ -214,7 +209,7 @@ header {
     background-color: var(--card-bg);
     padding: 15px;
     border-radius: 8px;
-    margin: 15px 0;
+    margin: 18px 0;
     text-align: left;
 }
 
@@ -253,6 +248,13 @@ input[type=range]::-webkit-slider-runnable-track {
 }
 
 .hidden { display: none !important; }
+
+#child-controls,
+#parent-controls {
+    display: flex;
+    flex-direction: column;
+    gap: 18px;
+}
 
 /* Debug Panel */
 #debug-panel {

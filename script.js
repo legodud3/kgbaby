@@ -20,6 +20,7 @@ const vadSensitivity = document.getElementById('vad-sensitivity');
 const vadValueDisplay = document.getElementById('vad-value');
 const wakeLockVideo = document.getElementById('wake-lock-video');
 const debugLog = document.getElementById('debug-log');
+const lastCryEl = document.getElementById('last-cry');
 
 // State
 let role = null;
@@ -49,6 +50,13 @@ let childRetryTimeout = null;
 let childRetryDelay = 3000;
 let debugPanel = null;
 let latestNetworkLabel = 'Network: Unknown';
+let dataConn = null;
+let lastCryTs = null;
+let lastCryInterval = null;
+let cryStartTs = null;
+let cryCooldownUntil = 0;
+let noiseFloorDb = null;
+let lastVadSampleTs = null;
 
 // Constants
 const MAX_LOG_ENTRIES = 200;
@@ -72,6 +80,13 @@ const PEER_CONFIG = {
     }
 };
 const VAD_HOLD_TIME = 2000; // ms to keep mic open after noise stops
+const CRY_CONFIG = Object.assign({
+    sustainedSeconds: 1.5,
+    minDbAboveNoise: 12,
+    cooldownSeconds: 10,
+    noiseFloorWindowSeconds: 8,
+    noiseFloorUpdateMarginDb: 3
+}, window.CRY_CONFIG || {});
 
 // Utility
 function log(msg, isError = false) {
@@ -123,6 +138,19 @@ async function startSession(selectedRole) {
         ensureDebugPanel();
         audioUnlocked = false;
         pendingRemoteStream = null;
+        lastCryTs = null;
+        cryStartTs = null;
+        cryCooldownUntil = 0;
+        noiseFloorDb = null;
+        lastVadSampleTs = null;
+        if (lastCryInterval) {
+            clearInterval(lastCryInterval);
+            lastCryInterval = null;
+        }
+        if (dataConn) {
+            dataConn.close();
+            dataConn = null;
+        }
 
         const roomName = roomIdInput.value.trim();
         if (!roomName) {
@@ -184,8 +212,14 @@ function switchToMonitor() {
     roleDisplay.textContent = role === 'child' ? 'Child Unit (Sender)' : 'Parent Unit (Receiver)';
     if (role === 'child') {
         childControls.classList.remove('hidden');
+        if (lastCryEl) lastCryEl.classList.add('hidden');
     } else {
         parentControls.classList.remove('hidden');
+        if (lastCryEl) {
+            lastCryEl.classList.remove('hidden');
+            updateLastCryDisplay();
+            ensureLastCryInterval();
+        }
     }
 }
 
@@ -197,6 +231,8 @@ function stopSession() {
     if (reconnectInterval) clearInterval(reconnectInterval);
     if (vadInterval) clearInterval(vadInterval);
     if (statsInterval) clearInterval(statsInterval);
+    if (lastCryInterval) clearInterval(lastCryInterval);
+    if (dataConn) dataConn.close();
     stopVisualizer();
     teardownAudioGraph();
     if (audioCtx) audioCtx.close();
@@ -249,6 +285,56 @@ function updateVolumeLabel() {
 // PeerJS & Logic
 function getPeerId(r) {
     return `babymonitor-${roomId}-${r}`;
+}
+
+function ensureLastCryInterval() {
+    if (lastCryInterval) return;
+    lastCryInterval = setInterval(updateLastCryDisplay, 10000);
+}
+
+function updateLastCryDisplay() {
+    if (!lastCryEl) return;
+    if (!lastCryTs) {
+        lastCryEl.textContent = 'Last cry: --';
+        return;
+    }
+    const elapsedSec = Math.floor((Date.now() - lastCryTs) / 1000);
+    let text = 'just now';
+    if (elapsedSec >= 10 && elapsedSec < 60) {
+        text = `${elapsedSec}s ago`;
+    } else if (elapsedSec >= 60 && elapsedSec < 3600) {
+        const mins = Math.floor(elapsedSec / 60);
+        text = `${mins}m ago`;
+    } else if (elapsedSec >= 3600) {
+        const hours = Math.floor(elapsedSec / 3600);
+        const mins = Math.floor((elapsedSec % 3600) / 60);
+        text = `${hours}h ${mins}m ago`;
+    }
+    lastCryEl.textContent = `Last cry: ${text}`;
+}
+
+function handleCryMessage(data) {
+    if (!data || data.type !== 'cry') return;
+    const ts = typeof data.ts === 'number' ? data.ts : Date.now();
+    lastCryTs = ts;
+    updateLastCryDisplay();
+    ensureLastCryInterval();
+}
+
+function sendCryEvent(ts) {
+    if (dataConn && dataConn.open) {
+        dataConn.send({ type: 'cry', ts });
+    }
+}
+
+function connectDataChannel() {
+    const targetId = `babymonitor-${roomId}-parent`;
+    if (dataConn && dataConn.open) return;
+    if (dataConn) dataConn.close();
+    dataConn = peer.connect(targetId, { reliable: true });
+    dataConn.on('open', () => log('Data channel open', false));
+    dataConn.on('error', (err) => log(`Data channel error: ${err.type || err}`, true));
+    dataConn.on('close', () => log('Data channel closed', true));
 }
 
 // --- CHILD LOGIC ---
@@ -343,6 +429,7 @@ function setupVAD(stream) {
     visualize('child');
 
     let logCounter = 0;
+    lastVadSampleTs = Date.now();
     vadInterval = setInterval(() => {
         if (audioCtx.state === 'suspended') {
             audioCtx.resume();
@@ -356,11 +443,16 @@ function setupVAD(stream) {
             sum += dataArray[i] * dataArray[i];
         }
         const rms = Math.sqrt(sum / bufferLength);
+        const levelDb = rmsToDb(rms);
+        const now = Date.now();
+        const dt = lastVadSampleTs ? (now - lastVadSampleTs) : 100;
+        lastVadSampleTs = now;
+
+        updateNoiseFloor(levelDb, dt);
+        maybeDetectCry(levelDb, now);
         
         const sliderVal = parseInt(vadSensitivity.value);
         const threshold = 60 - (sliderVal * 0.55); 
-        
-        const now = Date.now();
         const audioTrack = stream.getAudioTracks()[0];
         
         if (logCounter % 50 === 0) {
@@ -390,6 +482,45 @@ function setupVAD(stream) {
     }, 100);
 }
 
+function rmsToDb(rms) {
+    const safe = Math.max(1, rms);
+    return 20 * Math.log10(safe / 255);
+}
+
+function updateNoiseFloor(levelDb, dtMs) {
+    if (!Number.isFinite(levelDb)) return;
+    if (noiseFloorDb === null) {
+        noiseFloorDb = levelDb;
+        return;
+    }
+    const windowMs = Math.max(1000, CRY_CONFIG.noiseFloorWindowSeconds * 1000);
+    const alpha = 1 - Math.exp(-dtMs / windowMs);
+    if (levelDb < noiseFloorDb + CRY_CONFIG.noiseFloorUpdateMarginDb) {
+        noiseFloorDb = noiseFloorDb + alpha * (levelDb - noiseFloorDb);
+    }
+}
+
+function maybeDetectCry(levelDb, now) {
+    if (!Number.isFinite(levelDb) || noiseFloorDb === null) return;
+    if (now < cryCooldownUntil) {
+        cryStartTs = null;
+        return;
+    }
+    const thresholdDb = noiseFloorDb + CRY_CONFIG.minDbAboveNoise;
+    if (levelDb >= thresholdDb) {
+        if (!cryStartTs) cryStartTs = now;
+        const sustainMs = CRY_CONFIG.sustainedSeconds * 1000;
+        if (now - cryStartTs >= sustainMs) {
+            sendCryEvent(now);
+            log('Cry detected', false);
+            cryCooldownUntil = now + (CRY_CONFIG.cooldownSeconds * 1000);
+            cryStartTs = null;
+        }
+    } else {
+        cryStartTs = null;
+    }
+}
+
 function connectToParent() {
     if (currentCall) {
         currentCall.close();
@@ -402,6 +533,7 @@ function connectToParent() {
     currentCall = call;
     attachCallConnectionListeners(call, 'child');
     startStatsLoop(call, 'outbound');
+    connectDataChannel();
 
     call.on('close', () => {
         log('Call lost/closed. Retrying...', true);
@@ -454,6 +586,14 @@ function initParent() {
         log(`Incoming Call from ${call.peer}`, false);
         call.answer(); 
         handleIncomingCall(call);
+    });
+
+    peer.on('connection', (conn) => {
+        if (dataConn) dataConn.close();
+        dataConn = conn;
+        dataConn.on('data', handleCryMessage);
+        dataConn.on('error', (err) => log(`Data channel error: ${err.type || err}`, true));
+        dataConn.on('close', () => log('Data channel closed', true));
     });
     
     peer.on('error', (err) => {
@@ -579,7 +719,6 @@ function visualize(prefix) {
 
     const bufferLength = analyser.frequencyBinCount;
     const dataArray = new Uint8Array(bufferLength);
-    const bars = document.querySelectorAll(`#${prefix}-visualizer .bar`);
     const dbMeterFill = document.getElementById(`${prefix}-db-level`);
 
     visualizerActive = true;
@@ -602,23 +741,6 @@ function visualize(prefix) {
             else if (levelPercent > 60) dbMeterFill.style.backgroundColor = '#ffcc00';
             else dbMeterFill.style.backgroundColor = '#69f0ae';
         }
-
-        for (let i = 0; i < bars.length; i++) {
-            const startIdx = Math.floor(i * (bufferLength / bars.length));
-            let maxVal = 0;
-            for(let j=0; j < (bufferLength/bars.length); j++) {
-                if(dataArray[startIdx + j] > maxVal) maxVal = dataArray[startIdx + j];
-            }
-            
-            const height = Math.max(5, (maxVal / 255) * 100);
-            bars[i].style.height = `${height}%`;
-            
-            if (maxVal > 200) {
-                bars[i].style.backgroundColor = '#ff5252';
-            } else {
-                bars[i].style.backgroundColor = '#64ffda';
-            }
-        }
     }
     draw();
 }
@@ -627,12 +749,6 @@ function stopVisualizer() {
     visualizerActive = false;
     if (visualizerRafId) cancelAnimationFrame(visualizerRafId);
     visualizerRafId = null;
-
-    const allBars = document.querySelectorAll('.audio-visualizer .bar');
-    allBars.forEach(bar => {
-        bar.style.height = '5px';
-        bar.style.backgroundColor = '#64ffda';
-    });
     const allMeters = document.querySelectorAll('.meter-fill');
     allMeters.forEach(meter => {
         meter.style.width = '0%';

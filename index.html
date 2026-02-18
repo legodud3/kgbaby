@@ -38,7 +38,10 @@
         <!-- Monitor Screen: Active Session -->
         <div id="monitor-screen" class="screen hidden">
             <header>
-                <h2 id="role-display">Role</h2>
+                <div class="header-left">
+                    <h2 id="role-display">Role</h2>
+                    <div id="last-cry" class="last-cry hidden">Last cry: --</div>
+                </div>
                 <div id="connection-status" class="status-indicator disconnected"></div>
             </header>
 
@@ -54,14 +57,6 @@
                         </div>
                     </div>
                     
-                    <div id="child-visualizer" class="audio-visualizer">
-                        <div class="bar"></div>
-                        <div class="bar"></div>
-                        <div class="bar"></div>
-                        <div class="bar"></div>
-                        <div class="bar"></div>
-                    </div>
-
                     <div class="control-group">
                         <label for="vad-sensitivity">Sensitivity: <span id="vad-value">Medium</span></label>
                         <input type="range" id="vad-sensitivity" min="0" max="100" value="50">
@@ -78,14 +73,6 @@
                         </div>
                     </div>
                     
-                    <div id="parent-visualizer" class="audio-visualizer">
-                        <div class="bar"></div>
-                        <div class="bar"></div>
-                        <div class="bar"></div>
-                        <div class="bar"></div>
-                        <div class="bar"></div>
-                    </div>
-
                     <div class="control-group">
                         <label for="volume-control">Speaker Boost: <span id="volume-value">100%</span></label>
                         <input type="range" id="volume-control" min="0" max="400" value="100">
@@ -114,6 +101,7 @@
         </video>
     </div>
     
+    <script src="cry-config.js"></script>
     <script src="script.js"></script>
 </body>
 </html>
