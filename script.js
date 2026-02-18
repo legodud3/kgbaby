@@ -90,6 +90,15 @@ async function startSession(selectedRole) {
         debugLog.innerHTML = ''; // Clear previous logs
         log("Initializing...", false);
 
+        // Initialize AudioContext on user gesture
+        if (!audioCtx) {
+            audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+            // Optional: for some browsers we might need to resume it immediately
+            if (audioCtx.state === 'suspended') {
+                audioCtx.resume();
+            }
+        }
+
         // Check if PeerJS loaded
         if (typeof Peer === 'undefined') {
             log("Error: PeerJS library not loaded. Check Internet connection.", true);
@@ -261,7 +270,11 @@ function setupVAD(stream) {
         audioCtx = new (window.AudioContext || window.webkitAudioContext)();
     }
     
-    const source = audioCtx.createMediaStreamSource(stream);
+    // Clone the track for VAD so we can still analyze even when transmission is disabled
+    const vadTrack = stream.getAudioTracks()[0].clone();
+    const vadStream = new MediaStream([vadTrack]);
+    const source = audioCtx.createMediaStreamSource(vadStream);
+    
     const analyser = audioCtx.createAnalyser();
     analyser.fftSize = 512;
     source.connect(analyser);
@@ -272,7 +285,12 @@ function setupVAD(stream) {
     // Start loop
     if (vadInterval) clearInterval(vadInterval);
     
+    let logCounter = 0;
     vadInterval = setInterval(() => {
+        if (audioCtx.state === 'suspended') {
+            audioCtx.resume();
+        }
+        
         analyser.getByteFrequencyData(dataArray);
         
         // Calculate RMS (volume)
@@ -282,32 +300,35 @@ function setupVAD(stream) {
         }
         const rms = Math.sqrt(sum / bufferLength);
         
-        // Threshold calculation: 0-100 slider -> 0-255 range (inverted logic)
-        // High sensitivity (100) -> Low threshold (e.g., 5)
-        // Low sensitivity (0) -> High threshold (e.g., 50)
-        // Let's say max practical noise floor is ~50 in a quiet room, speaking is ~100+
-        
         const sliderVal = parseInt(vadSensitivity.value);
         // Map 0-100 to 60-5 (High sens = low threshold)
         const threshold = 60 - (sliderVal * 0.55); 
         
         const now = Date.now();
-        const audioTrack = stream.getAudioTracks()[0];
+        const audioTrack = stream.getAudioTracks()[0]; // The transmission track
         
+        // Log every 5 seconds
+        logCounter++;
+        if (logCounter % 50 === 0) {
+            console.log(`VAD: RMS=${rms.toFixed(1)}, Threshold=${threshold.toFixed(1)}, Active=${isTransmitting}`);
+        }
+
         if (rms > threshold) {
             lastNoiseTime = now;
             if (!isTransmitting) {
                 isTransmitting = true;
-                audioTrack.enabled = true;
+                if (audioTrack) audioTrack.enabled = true;
                 vadStatus.textContent = "Transmitting (Noise Detected)";
                 vadStatus.style.color = "#ff5252";
+                log("VAD: Noise detected, resuming transmission");
             }
         } else {
             if (isTransmitting && (now - lastNoiseTime > VAD_HOLD_TIME)) {
                 isTransmitting = false;
-                audioTrack.enabled = false;
+                if (audioTrack) audioTrack.enabled = false;
                 vadStatus.textContent = "Monitoring (Silence - Saving Data)";
                 vadStatus.style.color = "#69f0ae";
+                log("VAD: Silence detected, pausing transmission");
             }
         }
         
@@ -417,6 +438,16 @@ function playAudio(stream) {
     // We need a user gesture to play audio usually, handled by "Start Listening" button if needed
     // But we'll try to auto-play and if it fails, show the button
     
+    const remoteAudio = document.getElementById('remote-audio');
+    if (remoteAudio) {
+        remoteAudio.srcObject = stream;
+        remoteAudio.play().catch(err => {
+            console.warn('Auto-play blocked, waiting for user interaction:', err);
+            btnListen.style.display = 'block';
+            audioStatus.textContent = "Tap 'Start Listening' to hear audio";
+        });
+    }
+
     if (!audioCtx) {
         audioCtx = new (window.AudioContext || window.webkitAudioContext)();
     }
@@ -426,9 +457,6 @@ function playAudio(stream) {
     analyser.fftSize = 32;
     
     source.connect(analyser);
-    // Determine if we need to connect to destination (speakers)
-    // If we only analyze, we don't hear it. We MUST connect to destination.
-    // However, connecting source->destination directly works, but we also want the analyser.
     // source -> analyser -> destination
     analyser.connect(audioCtx.destination);
 
@@ -438,16 +466,27 @@ function playAudio(stream) {
         audioStatus.textContent = "Tap 'Start Listening' to hear audio";
         btnListen.style.display = 'block';
     } else {
-        btnListen.style.display = 'none';
+        // If it's already running, hide the button
+        if (remoteAudio && !remoteAudio.paused) {
+            btnListen.style.display = 'none';
+        }
     }
 }
 
 function resumeAudioContext() {
+    const remoteAudio = document.getElementById('remote-audio');
+    if (remoteAudio) {
+        remoteAudio.play().catch(e => console.error('Audio play failed:', e));
+    }
+
     if (audioCtx && audioCtx.state === 'suspended') {
         audioCtx.resume().then(() => {
             btnListen.style.display = 'none';
             audioStatus.textContent = "Audio Connected";
         });
+    } else {
+        btnListen.style.display = 'none';
+        audioStatus.textContent = "Audio Connected";
     }
 }
 
