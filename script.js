@@ -3,6 +3,7 @@ const landingScreen = document.getElementById('landing-screen');
 const monitorScreen = document.getElementById('monitor-screen');
 const btnChild = document.getElementById('btn-child');
 const btnParent = document.getElementById('btn-parent');
+const btnConnect = document.getElementById('btn-connect');
 const roomIdInput = document.getElementById('room-id');
 const roleDisplay = document.getElementById('role-display');
 const statusIndicator = document.getElementById('connection-status');
@@ -16,6 +17,7 @@ const vadStatus = document.getElementById('vad-status');
 const wakeLockVideo = document.getElementById('wake-lock-video');
 const debugLog = document.getElementById('debug-log');
 const lastCryEl = document.getElementById('last-cry');
+const statusText = document.getElementById('status-text');
 const modeTransparencyBtn = document.getElementById('mode-transparency');
 const modeMinimalBtn = document.getElementById('mode-minimal');
 const micBoostOffBtn = document.getElementById('mic-boost-off');
@@ -24,6 +26,7 @@ const btnDimParent = document.getElementById('btn-dim-parent');
 
 // State
 let role = null;
+let selectedRole = null;
 let roomId = null;
 let peer = null;
 let currentCall = null;
@@ -65,6 +68,7 @@ let micBoostEnabled = false;
 let childMode = 'transparency';
 let gateStartTs = null;
 let isDimmed = false;
+let connectionState = 'disconnected';
 
 // Constants
 const MAX_LOG_ENTRIES = 200;
@@ -121,9 +125,33 @@ function log(msg, isError = false) {
     }
 }
 
+function selectRole(nextRole) {
+    selectedRole = nextRole;
+    btnChild.classList.toggle('selected', nextRole === 'child');
+    btnParent.classList.toggle('selected', nextRole === 'parent');
+    if (btnConnect) {
+        btnConnect.textContent = nextRole === 'child' ? 'Connect as Child' : 'Connect as Parent';
+    }
+    updateConnectState();
+}
+
+function updateConnectState() {
+    if (!btnConnect) return;
+    const roomName = roomIdInput.value.trim();
+    const ready = !!roomName && !!selectedRole;
+    btnConnect.disabled = !ready;
+}
+
 // Event Listeners
-btnChild.addEventListener('click', () => startSession('child'));
-btnParent.addEventListener('click', () => startSession('parent'));
+btnChild.addEventListener('click', () => selectRole('child'));
+btnParent.addEventListener('click', () => selectRole('parent'));
+if (btnConnect) btnConnect.addEventListener('click', () => {
+    if (!selectedRole) {
+        alert('Please select a device role.');
+        return;
+    }
+    startSession(selectedRole);
+});
 btnStop.addEventListener('click', stopSession);
 btnListen.addEventListener('click', resumeAudioContext);
 if (modeTransparencyBtn) modeTransparencyBtn.addEventListener('click', () => setParentMode('transparency'));
@@ -131,6 +159,9 @@ if (modeMinimalBtn) modeMinimalBtn.addEventListener('click', () => setParentMode
 if (micBoostOffBtn) micBoostOffBtn.addEventListener('click', () => setParentMicBoost(false));
 if (micBoostOnBtn) micBoostOnBtn.addEventListener('click', () => setParentMicBoost(true));
 if (btnDimParent) btnDimParent.addEventListener('click', toggleParentDim);
+if (roomIdInput) roomIdInput.addEventListener('input', updateConnectState);
+
+updateConnectState();
 
 let lastDimTap = 0;
 dimOverlay.addEventListener('click', (e) => {
@@ -218,6 +249,7 @@ async function startSession(selectedRole) {
         }
 
         requestWakeLock();
+        setStatusText('disconnected');
     } catch (e) {
         console.error(e);
         log(`App Error: ${e.message}`, true);
@@ -459,6 +491,7 @@ function initChild() {
         log('Peer Open. ID: ' + id, false);
         switchToMonitor();
         updateStatus(true); // Connected to signaling server
+        setStatusText('waiting');
         resetChildRetry();
         startStreaming();
     });
@@ -473,11 +506,13 @@ function initChild() {
             // Target not found, retry
             log('Parent not found. Retrying...', false);
             retryConnection();
+            setStatusText('waiting');
         } else if (err.type === 'network') {
             log('Network Error.', true);
         } else {
             log(`Peer Error: ${err.type}`, true);
             updateStatus(false);
+            setStatusText('disconnected');
             // General error, retry initialization
             setTimeout(initChild, 5000);
         }
@@ -486,6 +521,7 @@ function initChild() {
     peer.on('disconnected', () => {
         log('Disconnected from Server. Reconnecting...', true);
         updateStatus(false);
+        setStatusText('disconnected');
         peer.reconnect();
     });
 }
@@ -619,7 +655,7 @@ function setupTransmitChain(stream) {
 
     const source = audioCtx.createMediaStreamSource(stream);
     micGainNode = audioCtx.createGain();
-    micGainNode.gain.value = micBoostEnabled ? 2.5 : 1.0;
+    micGainNode.gain.value = micBoostEnabled ? 3.5 : 1.0;
 
     const destination = audioCtx.createMediaStreamDestination();
     source.connect(micGainNode);
@@ -632,7 +668,7 @@ function setupTransmitChain(stream) {
 
 function applyMicBoost() {
     if (!micGainNode || !audioCtx) return;
-    const target = micBoostEnabled ? 2.5 : 1.0;
+    const target = micBoostEnabled ? 3.5 : 1.0;
     micGainNode.gain.setTargetAtTime(target, audioCtx.currentTime, 0.05);
 }
 
@@ -739,6 +775,7 @@ function initParent() {
         switchToMonitor();
         updateStatus(true); 
         audioStatus.textContent = "Waiting for Child unit...";
+        setStatusText('waiting');
         btnListen.style.display = 'none';
     });
 
@@ -791,6 +828,7 @@ function handleIncomingCall(call) {
         pendingRemoteStream = remoteStream;
         updateStatus(true, 'active');
         statusIndicator.style.backgroundColor = '#69f0ae';
+        setStatusText('connected');
         if (audioUnlocked) {
             startPlayback(remoteStream);
         } else {
@@ -805,6 +843,7 @@ function handleIncomingCall(call) {
         audioStatus.textContent = "Signal Lost. Waiting for Child...";
         stopVisualizer();
         statusIndicator.style.backgroundColor = '#ffcc00'; // Yellow/Orange for waiting
+        setStatusText('waiting');
         pendingRemoteStream = null;
         if (statsInterval) clearInterval(statsInterval);
     });
@@ -833,7 +872,7 @@ function startPlayback(stream) {
     analyser = audioCtx.createAnalyser();
     analyser.fftSize = 256;
     gainNode = audioCtx.createGain();
-    gainNode.gain.setValueAtTime(3.0, audioCtx.currentTime);
+    gainNode.gain.setValueAtTime(6.0, audioCtx.currentTime);
     source.connect(analyser);
     analyser.connect(gainNode);
     gainNode.connect(audioCtx.destination);
@@ -929,6 +968,22 @@ function updateStatus(isConnected, type = 'server') {
     }
 }
 
+function setStatusText(state) {
+    connectionState = state;
+    if (!statusText) return;
+    let icon = '🔴';
+    if (state === 'connected') icon = '🟢';
+    if (state === 'waiting') icon = '🟡';
+    const room = roomId || '--';
+    const label = state === 'connected' ? 'Connected' : (state === 'waiting' ? 'Waiting' : 'Disconnected');
+    statusText.textContent = `${icon} ${label} · ${room}`;
+
+    if (statusIndicator) {
+        statusIndicator.classList.remove('connected', 'disconnected', 'waiting');
+        statusIndicator.classList.add(state === 'connected' ? 'connected' : (state === 'waiting' ? 'waiting' : 'disconnected'));
+    }
+}
+
 function teardownAudioGraph() {
     if (analyser) {
         try { analyser.disconnect(); } catch (e) {}
@@ -972,6 +1027,13 @@ function attachCallConnectionListeners(call, roleLabel) {
     pc.oniceconnectionstatechange = () => {
         const state = pc.iceConnectionState;
         log(`ICE state: ${state}`, state === 'failed');
+        if (state === 'connected' || state === 'completed') {
+            setStatusText('connected');
+        } else if (state === 'disconnected') {
+            setStatusText('waiting');
+        } else if (state === 'failed') {
+            setStatusText('disconnected');
+        }
         if (state === 'failed' || state === 'disconnected') {
             audioStatus.textContent = "Connection unstable. Reconnecting...";
             if (roleLabel === 'child') {
@@ -982,6 +1044,13 @@ function attachCallConnectionListeners(call, roleLabel) {
     pc.onconnectionstatechange = () => {
         const state = pc.connectionState;
         log(`Connection state: ${state}`, state === 'failed');
+        if (state === 'connected') {
+            setStatusText('connected');
+        } else if (state === 'disconnected') {
+            setStatusText('waiting');
+        } else if (state === 'failed') {
+            setStatusText('disconnected');
+        }
         if (state === 'failed') {
             audioStatus.textContent = "Connection failed. Reconnecting...";
             if (roleLabel === 'child') {

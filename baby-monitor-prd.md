@@ -1,4 +1,4 @@
-PRD: BabyListen (Audio Monitor)
+PRD: KGBaby v0.1 (Audio Monitor)
 Objective: A privacy-first, browser-based audio monitor that allows one device (Child) to stream audio to another (Parent) with zero latency over a local network.
 
 1. Core Functionality

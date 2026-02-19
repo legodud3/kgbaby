@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>BabyListen - Secure Audio Monitor</title>
+    <title>KGBaby v0.1 - Secure Audio Monitor</title>
     <link rel="stylesheet" href="style.css">
     <!-- PeerJS CDN -->
     <script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
@@ -12,7 +12,7 @@
     <div id="app">
         <!-- Landing Screen: Role Selection -->
         <div id="landing-screen" class="screen">
-            <h1>BabyListen</h1>
+            <h1>KGBaby v0.1</h1>
             <p>Select your device role</p>
             
             <div class="role-selection">
@@ -31,6 +31,8 @@
                 <input type="text" id="room-id" placeholder="e.g. cabin123" autocapitalize="none">
                 <p class="hint">Enter the same room name on both devices.</p>
             </div>
+
+            <button id="btn-connect" class="btn-primary" disabled>Connect</button>
             
             <div id="debug-log" style="color: #ff5252; margin-top: 10px; font-size: 0.9rem; min-height: 20px;"></div>
         </div>
@@ -39,10 +41,14 @@
         <div id="monitor-screen" class="screen hidden">
             <header>
                 <div class="header-left">
+                    <div class="app-version">KGBaby v0.1</div>
                     <h2 id="role-display">Role</h2>
                     <div id="last-cry" class="last-cry hidden">Last cry: --</div>
                 </div>
-                <div id="connection-status" class="status-indicator disconnected"></div>
+                <div class="status-wrap">
+                    <div id="connection-status" class="status-indicator disconnected"></div>
+                    <div id="status-text" class="status-text">Disconnected · --</div>
+                </div>
             </header>
 
             <main>

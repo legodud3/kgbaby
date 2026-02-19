@@ -1,7 +1,7 @@
 {
-  "name": "baby-monitor",
-  "version": "1.0.0",
-  "description": "Simple P2P Baby Monitor",
+  "name": "kgbaby",
+  "version": "0.1.0",
+  "description": "KGBaby - Simple P2P Baby Monitor",
   "scripts": {
     "start": "npx http-server ."
   },
