@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>KGBaby v0.1 - Secure Audio Monitor</title>
+    <title>KGBaby v0.2 - Secure Audio Monitor</title>
     <link rel="stylesheet" href="style.css">
     <!-- PeerJS CDN -->
     <script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
@@ -12,7 +12,7 @@
     <div id="app">
         <!-- Landing Screen: Role Selection -->
         <div id="landing-screen" class="screen">
-            <h1>KGBaby v0.1</h1>
+            <h1>KGBaby v0.2</h1>
             <p>Select your device role</p>
             
             <div class="role-selection">
@@ -41,7 +41,7 @@
         <div id="monitor-screen" class="screen hidden">
             <header>
                 <div class="header-left">
-                    <div class="app-version">KGBaby v0.1</div>
+                    <div class="app-version">KGBaby v0.2</div>
                     <h2 id="role-display">Role</h2>
                     <div id="last-cry" class="last-cry hidden">Last cry: --</div>
                 </div>
@@ -75,14 +75,6 @@
                     <div class="visualizer-container">
                         <div id="parent-db-meter" class="meter-background">
                             <div id="parent-db-level" class="meter-fill"></div>
-                        </div>
-                    </div>
-                    
-                    <div class="control-group">
-                        <label>Mode</label>
-                        <div class="segmented">
-                            <button id="mode-transparency" class="seg-btn active" type="button">Transparency</button>
-                            <button id="mode-minimal" class="seg-btn" type="button">Minimal</button>
                         </div>
                     </div>
 

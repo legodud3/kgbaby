@@ -1,4 +1,4 @@
-# KGBaby v0.1 - Private Browser-Based Baby Monitor
+# KGBaby v0.2 - Private Browser-Based Baby Monitor
 
 A secure, zero-latency audio monitor that works over your local network using WebRTC (PeerJS). Designed for travel or backup use.
 
@@ -8,13 +8,13 @@ A secure, zero-latency audio monitor that works over your local network using We
 - **Privacy First**: Audio never touches a cloud server (except for the initial handshake).
 - **Dark Mode**: OLED-friendly interface for use in dark rooms.
 - **Smart Audio**:
-    - **Child Unit**: Noise suppression and auto-gain (hears whispers, ignores fans).
+    - **Child Unit**: Noise suppression, echo cancellation, and auto-gain for real rooms.
     - **Parent Unit**: Visual audio meter to see noise even when muted.
-- **Parent-Only Controls**: Mode (Transparency/Minimal), White Noise, and Dim Child Screen.
-- **White Noise**: Parent can start a looped white noise track on the child device with volume and a 30/60/Infinite timer (audible on Parent).
+- **Parent-Only Controls**: White Noise and Dim Child Screen.
+- **White Noise**: Parent can start a looped white noise track on the child device with volume and a 30/60/Infinite timer (suppressed from parent audio).
 - **Last Cry Indicator**: Parent shows “Last cry” based on sustained noise detection (This feature is WIP).
 - **Multiple Parents**: More than one parent device can connect to the same child (same room name).
-- **Local Settings**: Mode, white noise settings, and last cry persist per room on each device.
+- **Local Settings**: White noise settings and last cry persist per room on each device.
 - **Loud Alert Output**: Parent audio is amplified for alerting (fidelity tradeoff).
 - **Reliability**: Auto-reconnection if Wi-Fi drops.
 
@@ -37,7 +37,7 @@ A secure, zero-latency audio monitor that works over your local network using We
    - **Child Unit**: Allow microphone access.
    - **Parent Unit**: Wait for the status to show **Connected**. 
    - If audio doesn't play automatically, tap "Start Listening".
-   - Use parent controls to switch **Transparency/Minimal**, start **White Noise**, or **Dim Child Screen**.
+   - Use parent controls to start **White Noise** or **Dim Child Screen**.
 
 ## Multiple Parents
 
@@ -58,9 +58,8 @@ Use this section as your basic setup checklist (screenshots/video can be added h
    - On iOS, use **Guided Access** to prevent switching away.
    - On Android, keep the screen on or use the built-in **Dim Child Screen**.
 
-3. **Pick the Right Mode**
-   - **Transparency**: always transmits (best for alerts).
-   - **Minimal**: transmits only on sustained noise above the adaptive threshold.
+3. **Always-On Audio**
+   - The child unit always transmits audio for maximum clarity (no Minimal mode).
 
 4. **Boost When Needed**
    - If the parent audio is too quiet, raise device volume (audio is amplified by default).
@@ -129,7 +128,7 @@ TURN relays audio when direct connections are blocked. It requires a TURN server
 - **No Audio?**: Ensure the Parent unit has tapped "Start Listening" (browsers block auto-play audio).
 - **White Noise Won't Start?**: On the child device, tap “Tap to enable white noise” when prompted (autoplay restrictions).
 - **Too Quiet?**: Increase device volume; output is optimized for loud alerting.
-- **Settings Persist Locally**: Mode, white noise settings, and “last cry” are saved per room in browser storage. Use Stop & Exit to clear the last-cry timer on that device.
+- **Settings Persist Locally**: White noise settings and “last cry” are saved per room in browser storage. Use Stop & Exit to clear the last-cry timer on that device.
 - **Connection Failed?**: Refresh both pages and try a different Room Name.
 - **Echo?**: Ensure the Parent unit is not in the same room as the Child unit.
 
