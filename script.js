@@ -57,6 +57,7 @@ let childCalls = new Map();
 let pendingChildCalls = [];
 let parentRetryTimeout = null;
 let parentRetryDelay = 3000;
+let peerReconnectTimer = null;
 let silentStream = null;
 let silentAudioCtx = null;
 let lastCryTs = null;
@@ -393,6 +394,8 @@ function stopSession() {
     if (parentRetryTimeout) clearTimeout(parentRetryTimeout);
     parentRetryTimeout = null;
     parentRetryDelay = 3000;
+    if (peerReconnectTimer) clearTimeout(peerReconnectTimer);
+    peerReconnectTimer = null;
     stopVisualizer();
     teardownAudioGraph();
     if (audioCtx) audioCtx.close();
@@ -723,6 +726,10 @@ function initChild() {
 
     peer.on('open', (id) => {
         log('Peer Open. ID: ' + id, false);
+        if (peerReconnectTimer) {
+            clearTimeout(peerReconnectTimer);
+            peerReconnectTimer = null;
+        }
         switchToMonitor();
         updateStatus(true); // Connected to signaling server
         setStatusText('waiting');
@@ -753,7 +760,16 @@ function initChild() {
         log('Disconnected from Server. Reconnecting...', true);
         updateStatus(false);
         setStatusText('disconnected');
-        peer.reconnect();
+        if (peerReconnectTimer) return;
+        peerReconnectTimer = setTimeout(() => {
+            peerReconnectTimer = null;
+            try {
+                peer.destroy();
+            } catch (e) {
+                console.warn('Peer destroy failed during reconnect:', e);
+            }
+            initChild();
+        }, 2000);
     });
 }
 
