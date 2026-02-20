@@ -92,22 +92,29 @@
 
                 <div id="parent-controls" class="hidden role-stack">
                     <section class="surface-card">
-                        <p class="card-label">Live baby activity</p>
+                        <p class="card-label">Live monitor</p>
                         <div class="visualizer-container">
                             <div id="parent-db-meter" class="meter-background">
                                 <div id="parent-db-level" class="meter-fill"></div>
                             </div>
                         </div>
+                        <div id="audio-status">Waiting for audio...</div>
+                        <button id="btn-listen" class="btn-primary">Start Listening</button>
+                        <button id="btn-ack-alarm" class="btn-danger hidden" type="button">I Checked The Baby</button>
                     </section>
 
-                    <section class="surface-card control-group">
+                    <section class="surface-card control-group compact-card">
                         <p class="card-label">Comfort controls</p>
-                        <label>White noise</label>
-                        <button id="white-noise-toggle" class="btn-secondary" type="button">Start White Noise</button>
+                        <div class="action-row">
+                            <button id="white-noise-toggle" class="btn-secondary btn-inline" type="button">Start White Noise</button>
+                            <button id="btn-dim-parent" class="btn-secondary btn-inline" type="button">Dim Child Screen</button>
+                        </div>
                         <label>Custom shush loop</label>
-                        <button id="btn-record-shush" class="btn-secondary" type="button">Record 10s Shush</button>
-                        <button id="btn-toggle-shush" class="btn-secondary" type="button" disabled>Use Recorded Shush: Off</button>
-                        <button id="btn-clear-shush" class="btn-secondary" type="button" disabled>Delete Recorded Shush</button>
+                        <div class="action-row">
+                            <button id="btn-record-shush" class="btn-secondary btn-inline" type="button">Record 10s Shush</button>
+                            <button id="btn-toggle-shush" class="btn-secondary btn-inline" type="button" disabled>Use Recorded Shush: Off</button>
+                        </div>
+                        <button id="btn-clear-shush" class="btn-secondary btn-inline" type="button" disabled>Delete Recorded Shush</button>
                         <div id="shush-status" class="hint">No custom shush recorded.</div>
                         <label for="white-noise-volume">Volume</label>
                         <input id="white-noise-volume" type="range" min="0" max="100" value="50">
@@ -119,12 +126,7 @@
                         </select>
                     </section>
 
-                    <button id="btn-dim-parent" class="btn-secondary" type="button">Dim Child Screen</button>
-                    <button id="btn-enable-alarms" class="btn-secondary" type="button">Enable Alarms</button>
-                    <button id="btn-ack-alarm" class="btn-danger hidden" type="button">I Checked The Baby</button>
                     <audio id="remote-audio" autoplay playsinline style="display:none;" muted></audio>
-                    <button id="btn-listen" class="btn-primary">Start Listening</button>
-                    <div id="audio-status">Waiting for audio...</div>
                 </div>
             </main>
 

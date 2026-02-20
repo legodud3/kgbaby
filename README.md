@@ -22,7 +22,7 @@ A secure, low-latency audio monitor that runs in the browser using direct WebRTC
 4. Enter that same join code on parent.
 5. (Optional) Set a baby name label on each device for friendly UI text.
 6. Tap `Connect`.
-7. On parent, tap `Enable Alarms` once and `Start Listening` if autoplay is blocked.
+7. On parent, tap `Start Listening` if autoplay is blocked.
 
 ## Recommended Setup
 

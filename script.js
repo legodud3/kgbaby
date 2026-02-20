@@ -30,7 +30,6 @@ const whiteNoiseAudio = document.getElementById('white-noise-audio');
 const whiteNoiseStatus = document.getElementById('white-noise-status');
 const whiteNoiseRemaining = document.getElementById('white-noise-remaining');
 const whiteNoiseCta = document.getElementById('white-noise-cta');
-const btnEnableAlarms = document.getElementById('btn-enable-alarms');
 const btnAckAlarm = document.getElementById('btn-ack-alarm');
 const btnRecordShush = document.getElementById('btn-record-shush');
 const btnToggleShush = document.getElementById('btn-toggle-shush');
@@ -122,7 +121,7 @@ let heartbeatSeq = 0;
 let lastHeartbeatAt = 0;
 let parentPeerHardResetTimer = null;
 let alarmGraceTimeout = null;
-let alarmsEnabled = false;
+let alarmsEnabled = true;
 let alarmActive = false;
 let alarmAudioCtx = null;
 let alarmOscillator = null;
@@ -362,9 +361,6 @@ function startAlarmTone() {
 }
 
 function updateAlarmButtons() {
-    if (btnEnableAlarms) {
-        btnEnableAlarms.textContent = alarmsEnabled ? 'Alarms Enabled' : 'Enable Alarms';
-    }
     if (btnAckAlarm) {
         btnAckAlarm.classList.toggle('hidden', !alarmActive);
     }
@@ -375,9 +371,7 @@ function triggerConnectionAlarm(reason) {
     alarmActive = true;
     setStatusText('alarm');
     if (audioStatus) {
-        audioStatus.textContent = alarmsEnabled
-            ? `ALARM: ${reason}`
-            : `ALARM: ${reason} (tap Enable Alarms for sound)`;
+        audioStatus.textContent = `ALARM: ${reason}`;
     }
     startAlarmTone();
     updateAlarmButtons();
@@ -790,7 +784,6 @@ if (whiteNoiseToggle) whiteNoiseToggle.addEventListener('click', toggleParentWhi
 if (whiteNoiseVolumeInput) whiteNoiseVolumeInput.addEventListener('input', handleWhiteNoiseVolumeInput);
 if (whiteNoiseTimerSelect) whiteNoiseTimerSelect.addEventListener('change', handleWhiteNoiseTimerChange);
 if (whiteNoiseCta) whiteNoiseCta.addEventListener('click', () => attemptWhiteNoisePlayback());
-if (btnEnableAlarms) btnEnableAlarms.addEventListener('click', enableAlarmsFromGesture);
 if (btnAckAlarm) btnAckAlarm.addEventListener('click', acknowledgeAlarm);
 if (btnCopyCode) btnCopyCode.addEventListener('click', copyJoinCodeToClipboard);
 if (btnNewCode) btnNewCode.addEventListener('click', regenerateJoinCode);
@@ -908,6 +901,7 @@ async function startSession(selectedRole) {
         });
 
         role = selectedRole;
+        if (role === 'parent') enableAlarmsFromGesture();
         displayJoinCode = joinCode;
         displayBabyName = babyNameInput ? babyNameInput.value.trim() : '';
         roomId = deriveSessionIdFromJoinCode(joinCode);
@@ -983,6 +977,8 @@ async function startSession(selectedRole) {
 function switchToMonitor() {
     landingScreen.classList.add('hidden');
     monitorScreen.classList.remove('hidden');
+    monitorScreen.classList.toggle('parent-layout', role === 'parent');
+    monitorScreen.classList.toggle('child-layout', role === 'child');
     roleDisplay.textContent = role === 'child' ? 'Child Unit' : 'Parent Unit';
     if (role === 'child') {
         childControls.classList.remove('hidden');
