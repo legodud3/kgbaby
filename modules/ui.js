@@ -1,4 +1,4 @@
-export const elements = {
+export const elements = typeof document !== 'undefined' ? {
     landingScreen: document.getElementById('landing-screen'),
     monitorScreen: document.getElementById('monitor-screen'),
     btnChild: document.getElementById('btn-child'),
@@ -35,7 +35,7 @@ export const elements = {
     btnToggleShush: document.getElementById('btn-toggle-shush'),
     btnClearShush: document.getElementById('btn-clear-shush'),
     shushStatus: document.getElementById('shush-status'),
-};
+} : {};
 
 export function showScreen(screenId) {
     elements.landingScreen.classList.add('hidden');

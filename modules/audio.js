@@ -91,7 +91,7 @@ export function setupVAD(stream, visualizeCallback) {
         const dt = lastVadSampleTs ? (now - lastVadSampleTs) : 100;
         lastVadSampleTs = now;
 
-        updateNoiseFloor(levelDb, dt);
+        noiseFloorDb = updateNoiseFloor(levelDb, dt, noiseFloorDb);
         maybeDetectElevatedActivity(levelDb, now);
         updateInfantState(levelDb, now);
         
@@ -156,22 +156,22 @@ export function ensureTransmission(enabled) {
     isTransmitting = enabled;
 }
 
-function rmsToDb(rms) {
+export function rmsToDb(rms) {
     const safe = Math.max(1, rms);
     return 20 * Math.log10(safe / 255);
 }
 
-function updateNoiseFloor(levelDb, dtMs) {
-    if (!Number.isFinite(levelDb)) return;
-    if (noiseFloorDb === null) {
-        noiseFloorDb = levelDb;
-        return;
-    }
+export function updateNoiseFloor(levelDb, dtMs, currentFloor) {
+    if (!Number.isFinite(levelDb)) return currentFloor;
+    if (currentFloor === null) return levelDb;
+    
     const windowMs = Math.max(1000, CRY_CONFIG.noiseFloorWindowSeconds * 1000);
     const alpha = 1 - Math.exp(-dtMs / windowMs);
-    if (levelDb < noiseFloorDb + CRY_CONFIG.noiseFloorUpdateMarginDb) {
-        noiseFloorDb = noiseFloorDb + alpha * (levelDb - noiseFloorDb);
+    
+    if (levelDb < currentFloor + CRY_CONFIG.noiseFloorUpdateMarginDb) {
+        return currentFloor + alpha * (levelDb - currentFloor);
     }
+    return currentFloor;
 }
 
 function maybeDetectElevatedActivity(levelDb, now) {

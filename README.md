@@ -89,11 +89,22 @@ If direct peer connection fails on restrictive networks:
 
 ## Development
 
-No build step required.
+The project uses a **native ES Module (No-Build)** architecture. This means you don't need `npm install` or a build step to run it. Simply serve the files locally:
 
 ```bash
+# Example using npx
 npx serve
 ```
+
+### Architecture
+- `main.js`: Entry point that orchestrates role selection and application lifecycle.
+- `modules/`:
+  - `audio.js`: Encapsulates Web Audio API, VAD engine, and transmission chain.
+  - `network.js`: Manages PeerJS lifecycle, heartbeats, and bitrate adaptation.
+  - `ui.js`: DOM selections and visual state updates.
+  - `config.js`: Centralized technical constants and parameters.
+  - `utils.js`: Pure functional helpers and storage management.
+  - `alarm.js`: Isolated fail-safe alarm logic.
 
 ## License
 

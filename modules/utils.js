@@ -37,7 +37,7 @@ export function hashString32(input) {
 }
 
 export function randomInt(max) {
-    if (window.crypto && window.crypto.getRandomValues) {
+    if (typeof window !== 'undefined' && window.crypto && window.crypto.getRandomValues) {
         const arr = new Uint32Array(1);
         window.crypto.getRandomValues(arr);
         return arr[0] % max;
@@ -51,7 +51,7 @@ export function normalizeJoinCode(value) {
 }
 
 export function isValidJoinCode(value) {
-    return /^[A-Z]+-[A-Z2-9]{4}-[A-Z2-9]{4}$/.test(value);
+    return /^[A-Z]+-[A-Z0-9]{4}-[A-Z0-9]{4}$/.test(value);
 }
 
 export function generateJoinCode() {

@@ -8,7 +8,12 @@ This document explains the technical and UX decisions in the current release.
   - Why: Keeps audio path direct for low latency and privacy.
   - Tradeoff: Some networks still require TURN fallback.
 
-- **Browser-first, no build step**
+- **Native ES Modules (No-Build)**
+  - Why: Maintains "no-build" portability while resolving monolithic file complexity.
+  - Benefit: Clear domain separation between UI, Audio, and Networking logic without needing Webpack or Vite.
+  - Tradeoff: Requires a local server (like `npx serve`) during development to satisfy CORS/ESM requirements.
+
+- **Browser-first**
   - Why: Faster setup on spare phones and tablets.
   - Tradeoff: Mobile autoplay/background constraints are stricter than native apps.
 

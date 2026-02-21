@@ -1,9 +1,11 @@
 {
   "name": "kgbaby",
   "version": "0.3.0",
+  "type": "module",
   "description": "KGBaby - Simple P2P Baby Monitor",
   "scripts": {
-    "start": "npx http-server ."
+    "start": "npx http-server .",
+    "test": "node --test tests/*.test.js"
   },
   "keywords": [],
   "author": "",
