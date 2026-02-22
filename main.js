@@ -26,6 +26,10 @@ let whiteNoiseStartedAt = null;
 
 let parentRetryDelay = 3000;
 let parentRetryTimeout = null;
+let parentConnectAttempt = 0;
+let parentStatsLastLogAt = 0;
+let parentHeartbeatCount = 0;
+let parentHeartbeatWarningShown = false;
 
 let wakeLock = null;
 let heartbeatInterval = null;
@@ -37,6 +41,68 @@ function init() {
     restoreLastSession();
     attachEventListeners();
     updateConnectState();
+}
+
+function parentLog(message, isError = false) {
+    if (selectedRole === 'parent' || role === 'parent') {
+        utils.log(`[PARENT] ${message}`, isError);
+    }
+}
+
+function formatError(err) {
+    if (!err) return 'unknown';
+    const parts = [];
+    if (err.type) parts.push(`type=${err.type}`);
+    if (err.message) parts.push(`message=${err.message}`);
+    if (err.name) parts.push(`name=${err.name}`);
+    if (err.code != null) parts.push(`code=${err.code}`);
+    return parts.length ? parts.join(', ') : String(err);
+}
+
+function attachParentPeerConnectionDebug(call) {
+    if (!call) return;
+    const attach = () => {
+        const pc = call.peerConnection;
+        if (!pc) return false;
+        if (pc.__kgbabyParentDebugAttached) return true;
+
+        pc.__kgbabyParentDebugAttached = true;
+        parentLog(`RTCPeerConnection ready: signaling=${pc.signalingState}, ice=${pc.iceConnectionState}, conn=${pc.connectionState}`);
+
+        pc.addEventListener('iceconnectionstatechange', () => {
+            parentLog(`ICE state -> ${pc.iceConnectionState}`);
+        });
+        pc.addEventListener('connectionstatechange', () => {
+            parentLog(`Peer connection state -> ${pc.connectionState}`);
+        });
+        pc.addEventListener('signalingstatechange', () => {
+            parentLog(`Signaling state -> ${pc.signalingState}`);
+        });
+        pc.addEventListener('icegatheringstatechange', () => {
+            parentLog(`ICE gathering state -> ${pc.iceGatheringState}`);
+        });
+        pc.addEventListener('icecandidateerror', (e) => {
+            parentLog(`ICE candidate error: code=${e.errorCode || 'n/a'} url=${e.url || 'unknown'} text=${e.errorText || ''}`, true);
+        });
+        pc.addEventListener('track', (e) => {
+            parentLog(`RTCPeerConnection track event: kind=${e.track?.kind || 'unknown'}, streams=${e.streams?.length || 0}`);
+        });
+        return true;
+    };
+
+    if (attach()) return;
+    let attempts = 0;
+    const timer = setInterval(() => {
+        attempts += 1;
+        if (attach()) {
+            clearInterval(timer);
+            return;
+        }
+        if (attempts >= 20) {
+            clearInterval(timer);
+            parentLog('RTCPeerConnection not available after 4s on MediaConnection.', true);
+        }
+    }, 200);
 }
 
 function isPeerJsAvailable() {
@@ -186,6 +252,9 @@ function setStatusText(state) {
     }
     
     ui.updateConnectionStatus(state);
+    if (role === 'parent') {
+        parentLog(`Status UI -> ${state} (${elements.statusText.textContent})`);
+    }
 }
 
 // Child Flow
@@ -273,71 +342,140 @@ function handleChildDataMessage(data) {
 function initParentFlow() {
     const parentSuffix = Math.random().toString(36).slice(2, 8);
     const myId = `babymonitor-${roomId}-parent-${parentSuffix}`;
+    parentLog(`Initializing parent flow. peerId=${myId}, room=${roomId}`);
     
     network.initNetwork({
         onOpen: (id) => {
             utils.log(`Network open. ID: ${id}`);
+            parentLog(`Peer open. id=${id}. Beginning child connect sequence.`);
             setStatusText('waiting');
             resetParentRetry();
             connectToChild();
         },
         onError: (err) => {
             utils.log(`Network error: ${err.type || 'unknown'} ${err.message ? `- ${err.message}` : ''}`, true);
+            parentLog(`Peer error: ${formatError(err)}`, true);
             if (err?.type === 'network' || err?.type === 'socket-error' || err?.type === 'server-error') {
                 utils.log('Signal server unreachable. Check captive portal/VPN/firewall or use a custom PeerJS host.', true);
             }
             setStatusText('disconnected');
             retryParentConnection();
         },
-        onDisconnected: () => setStatusText('disconnected')
+        onDisconnected: () => {
+            parentLog('Peer disconnected event fired.', true);
+            setStatusText('disconnected');
+        },
+        onClose: () => {
+            parentLog('Peer close event fired.', true);
+            setStatusText('disconnected');
+        }
     });
     network.createPeer(myId);
+    parentLog('Peer object created.');
     
     alarm.initAlarm();
     startHeartbeatWatchdog();
 }
 
 function connectToChild() {
-    const call = network.connectToChild(roomId, audio.createMediaStreamDestination().stream);
-    if (!call) return;
+    parentConnectAttempt += 1;
+    const targetId = `babymonitor-${roomId}-child`;
+    parentLog(`Connect attempt #${parentConnectAttempt} to child peer ${targetId}`);
+    const silentDestination = audio.createMediaStreamDestination();
+    const silentTrackCount = silentDestination.stream?.getAudioTracks?.().length || 0;
+    parentLog(`Created silent upstream stream for call bootstrap. tracks=${silentTrackCount}`);
+
+    const call = network.connectToChild(roomId, silentDestination.stream);
+    if (!call) {
+        parentLog('network.connectToChild returned no call object (peer not ready?).', true);
+        return;
+    }
+    parentLog(`MediaConnection created. peer=${call.peer || 'unknown'}`);
     
     handleParentCall(call);
+    attachParentPeerConnectionDebug(call);
     
     const dataConn = network.connectDataChannelToChild(roomId);
+    if (!dataConn) {
+        parentLog('network.connectDataChannelToChild returned no data connection.', true);
+        return;
+    }
+    parentLog(`Data connection created. peer=${dataConn.peer || 'unknown'}, label=${dataConn.label || 'default'}`);
     dataConn.on('data', (data) => handleParentDataMessage(data));
     dataConn.on('open', () => {
         utils.log('Data channel open');
+        parentLog('Data channel open.');
         alarm.clearAlarmGrace();
+    });
+    dataConn.on('close', () => {
+        parentLog('Data channel closed.', true);
+    });
+    dataConn.on('error', (err) => {
+        parentLog(`Data channel error: ${formatError(err)}`, true);
     });
 }
 
 function handleParentCall(call) {
+    parentLog('Binding MediaConnection handlers.');
     call.on('stream', (stream) => {
         utils.log('Audio stream received');
+        const tracks = stream?.getTracks?.() || [];
+        const trackKinds = tracks.map(t => t.kind).join(',') || 'none';
+        parentLog(`Remote stream received. tracks=${tracks.length}, kinds=${trackKinds}`);
         setStatusText('connected');
-        audio.startPlayback(stream, (prefix, analyser) => ui.visualize(prefix, analyser));
+        audio.startPlayback(stream, (prefix, analyser) => ui.visualize(prefix, analyser))
+            .then(() => parentLog('Remote audio playback started.'))
+            .catch((err) => parentLog(`Remote audio playback failed: ${formatError(err)}`, true));
     });
     
     call.on('close', () => {
+        parentLog('MediaConnection close event fired.', true);
         setStatusText('waiting');
         retryParentConnection();
     });
+
+    call.on('error', (err) => {
+        parentLog(`MediaConnection error: ${formatError(err)}`, true);
+    });
     
     network.startStatsLoop(call, 'inbound', (stats) => {
+        const now = Date.now();
+        if (stats.isPoor || stats.silenceDetected || (now - parentStatsLastLogAt) > 10000) {
+            parentStatsLastLogAt = now;
+            parentLog(`Inbound stats: poor=${stats.isPoor} silence=${stats.silenceDetected} bitrate=${stats.bitrate ?? 'n/a'} rtt=${stats.rtt ?? 'n/a'} jitter=${stats.jitter ?? 'n/a'} lost=${stats.packetsLost ?? 'n/a'}`);
+        }
         if (stats.silenceDetected) {
             elements.audioStatus.textContent = "Silence detected. Check child unit.";
         }
     });
+    parentLog('Inbound stats loop started.');
 }
 
 function handleParentDataMessage(data) {
-    if (!data || !data.type) return;
+    if (!data || !data.type) {
+        parentLog(`Received malformed data message: ${JSON.stringify(data)}`, true);
+        return;
+    }
     if (data.type === 'heartbeat') {
         lastHeartbeatAt = Date.now();
+        parentHeartbeatCount += 1;
+        if (parentHeartbeatWarningShown) {
+            parentHeartbeatWarningShown = false;
+            parentLog('Heartbeat restored after warning.');
+        }
+        if (parentHeartbeatCount % 5 === 0) {
+            parentLog(`Heartbeat received (${parentHeartbeatCount} total).`);
+        }
         alarm.clearAlarmGrace();
+    }
+    if (data.type !== 'heartbeat') {
+        parentLog(`Data message received: type=${data.type}`);
     }
     if (data.type === 'elevated') handleElevatedEvent(data.ts);
     if (data.type === 'state') handleStateEvent(data.state);
+    if (data.type === 'dim') {
+        parentLog(`Dim sync received from child: enabled=${!!data.enabled}`);
+    }
 }
 
 function handleElevatedEvent(ts) {
@@ -363,12 +501,18 @@ function updateStateSummary() {
 }
 
 function retryParentConnection() {
-    if (parentRetryTimeout) return;
+    if (parentRetryTimeout) {
+        parentLog(`Retry already scheduled. delay=${parentRetryDelay/1000}s`);
+        return;
+    }
     utils.log(`Retrying connection in ${parentRetryDelay/1000}s...`);
+    parentLog(`Scheduling retry in ${parentRetryDelay/1000}s.`);
     parentRetryTimeout = setTimeout(() => {
         parentRetryTimeout = null;
+        parentLog('Retry timer fired; reconnecting now.');
         connectToChild();
         parentRetryDelay = Math.min(parentRetryDelay * 2, 30000);
+        parentLog(`Next retry backoff set to ${parentRetryDelay/1000}s.`);
     }, parentRetryDelay);
 }
 
@@ -376,6 +520,7 @@ function resetParentRetry() {
     if (parentRetryTimeout) clearTimeout(parentRetryTimeout);
     parentRetryTimeout = null;
     parentRetryDelay = 3000;
+    parentLog('Retry backoff reset to 3s.');
 }
 
 // Heartbeat
@@ -388,9 +533,16 @@ function startHeartbeat() {
 
 function startHeartbeatWatchdog() {
     lastHeartbeatAt = Date.now();
+    parentLog(`Heartbeat watchdog started. interval=${config.HEARTBEAT_INTERVAL_MS}ms timeout=${config.HEARTBEAT_TIMEOUT_MS}ms`);
     setInterval(() => {
         const now = Date.now();
-        if (now - lastHeartbeatAt > config.HEARTBEAT_TIMEOUT_MS) {
+        const age = now - lastHeartbeatAt;
+        if (age > (config.HEARTBEAT_TIMEOUT_MS * 0.66) && !parentHeartbeatWarningShown) {
+            parentHeartbeatWarningShown = true;
+            parentLog(`Heartbeat delayed: last heartbeat ${Math.round(age / 1000)}s ago.`, true);
+        }
+        if (age > config.HEARTBEAT_TIMEOUT_MS) {
+            parentLog(`Heartbeat timeout: last heartbeat ${Math.round(age / 1000)}s ago. Triggering alarm.`, true);
             alarm.scheduleAlarm('Connection lost (Heartbeat timeout)');
             setStatusText('disconnected');
         }
