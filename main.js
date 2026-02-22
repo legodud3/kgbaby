@@ -30,6 +30,8 @@ let parentConnectAttempt = 0;
 let parentStatsLastLogAt = 0;
 let parentHeartbeatCount = 0;
 let parentHeartbeatWarningShown = false;
+let childHeartbeatCount = 0;
+let childStatsLastLogAt = 0;
 
 let wakeLock = null;
 let heartbeatInterval = null;
@@ -46,6 +48,12 @@ function init() {
 function parentLog(message, isError = false) {
     if (selectedRole === 'parent' || role === 'parent') {
         utils.log(`[PARENT] ${message}`, isError);
+    }
+}
+
+function childLog(message, isError = false) {
+    if (selectedRole === 'child' || role === 'child') {
+        utils.log(`[CHILD] ${message}`, isError);
     }
 }
 
@@ -260,9 +268,11 @@ function setStatusText(state) {
 // Child Flow
 async function initChildFlow() {
     const myId = `babymonitor-${roomId}-child`;
+    childLog(`Initializing child flow. peerId=${myId}, room=${roomId}`);
     network.initNetwork({
         onOpen: (id) => {
             utils.log(`Network open. ID: ${id}`);
+            childLog(`Peer open. id=${id}`);
             setStatusText('waiting');
             startChildStreaming();
             startHeartbeat();
@@ -271,19 +281,32 @@ async function initChildFlow() {
         onConnection: handleIncomingDataConnection,
         onError: (err) => {
             utils.log(`Network error: ${err.type || 'unknown'} ${err.message ? `- ${err.message}` : ''}`, true);
+            childLog(`Peer error: ${formatError(err)}`, true);
             if (err?.type === 'network' || err?.type === 'socket-error' || err?.type === 'server-error') {
                 utils.log('Signal server unreachable. Check captive portal/VPN/firewall or use a custom PeerJS host.', true);
             }
             setStatusText('disconnected');
             setTimeout(() => location.reload(), 5000);
         },
-        onDisconnected: () => setStatusText('disconnected')
+        onDisconnected: () => {
+            childLog('Peer disconnected event fired.', true);
+            setStatusText('disconnected');
+        },
+        onClose: () => {
+            childLog('Peer close event fired.', true);
+            setStatusText('disconnected');
+        }
     });
     network.createPeer(myId);
+    childLog('Peer object created.');
     
     audio.initAudio({
-        onElevatedActivity: (ts) => network.broadcastToParents({ type: 'elevated', ts }),
+        onElevatedActivity: (ts) => {
+            childLog(`Elevated activity event broadcast. ts=${ts}`);
+            network.broadcastToParents({ type: 'elevated', ts });
+        },
         onStateChange: (state, confidence) => {
+            childLog(`State change broadcast. state=${state} confidence=${confidence ?? 'n/a'}`);
             network.broadcastToParents({ type: 'state', state, confidence, ts: Date.now() });
         }
     });
@@ -291,50 +314,87 @@ async function initChildFlow() {
 
 async function startChildStreaming() {
     try {
+        childLog('Starting local audio capture for child stream.');
         const stream = await audio.getLocalStream();
+        const tracks = stream?.getTracks?.() || [];
+        childLog(`Mic stream ready. tracks=${tracks.length} kinds=${tracks.map(t => t.kind).join(',') || 'none'}`);
         audio.setupVAD(stream, (prefix, analyser) => ui.visualize(prefix, analyser));
+        childLog('VAD initialized.');
         const sendStream = audio.setupTransmitChain(stream);
+        const sendTracks = sendStream?.getTracks?.() || [];
+        childLog(`Transmit chain ready. tracks=${sendTracks.length} kinds=${sendTracks.map(t => t.kind).join(',') || 'none'}`);
         
         // Answer pending calls
         const pending = network.getPendingChildCalls();
+        childLog(`Pending unanswered calls queued while mic initializing: ${pending.length}`);
         pending.forEach(call => call.answer(sendStream));
+        if (pending.length > 0) {
+            childLog(`Answered ${pending.length} pending calls after mic initialization.`);
+        }
         network.setPendingChildCalls([]);
     } catch (err) {
         utils.log(`Mic Error: ${err.message}`, true);
+        childLog(`Mic setup failed: ${formatError(err)}`, true);
         alert('Microphone access denied: ' + err.message);
     }
 }
 
 function handleIncomingCall(call) {
+    childLog(`Incoming media call from peer=${call.peer || 'unknown'}`);
     const stream = audio.setupTransmitChain();
     if (!stream) {
+        childLog('Transmit stream not ready yet; queueing incoming call as pending.');
         network.getPendingChildCalls().push(call);
         return;
     }
+    childLog('Answering incoming media call with active transmit stream.');
     call.answer(stream);
     network.getChildCalls().set(call.peer, call);
+    childLog(`Active child calls=${network.getChildCalls().size}`);
     setStatusText('connected');
     
     network.startStatsLoop(call, 'outbound', (stats) => {
-        // Handle child stats
+        const now = Date.now();
+        if (stats.isPoor || (now - childStatsLastLogAt) > 10000) {
+            childStatsLastLogAt = now;
+            childLog(`Outbound stats: poor=${stats.isPoor} bitrate=${stats.bitrate ?? 'n/a'} rtt=${stats.rtt ?? 'n/a'} jitter=${stats.jitter ?? 'n/a'} lost=${stats.packetsLost ?? 'n/a'}`);
+        }
     });
+    childLog('Outbound stats loop started for active call.');
     
     call.on('close', () => {
+        childLog(`Media call closed for peer=${call.peer || 'unknown'}.`, true);
         network.getChildCalls().delete(call.peer);
+        childLog(`Active child calls=${network.getChildCalls().size}`);
         if (network.getChildCalls().size === 0) setStatusText('waiting');
+    });
+    call.on('error', (err) => {
+        childLog(`Media call error for peer=${call.peer || 'unknown'}: ${formatError(err)}`, true);
     });
 }
 
 function handleIncomingDataConnection(conn) {
+    childLog(`Incoming data connection from peer=${conn.peer || 'unknown'} label=${conn.label || 'default'}`);
     network.getParentDataConns().set(conn.peer, conn);
     conn.on('data', (data) => handleChildDataMessage(data));
     conn.on('open', () => {
         utils.log('Parent data channel open');
+        childLog(`Data channel open with parent=${conn.peer || 'unknown'}`);
+    });
+    conn.on('close', () => {
+        childLog(`Data channel closed with parent=${conn.peer || 'unknown'}.`, true);
+    });
+    conn.on('error', (err) => {
+        childLog(`Data channel error with parent=${conn.peer || 'unknown'}: ${formatError(err)}`, true);
     });
 }
 
 function handleChildDataMessage(data) {
-    if (!data || !data.type) return;
+    if (!data || !data.type) {
+        childLog(`Malformed data message from parent: ${JSON.stringify(data)}`, true);
+        return;
+    }
+    childLog(`Data message received from parent: type=${data.type}`);
     if (data.type === 'dim') setDimOverlay(!!data.enabled);
 }
 
@@ -526,7 +586,13 @@ function resetParentRetry() {
 // Heartbeat
 function startHeartbeat() {
     if (heartbeatInterval) clearInterval(heartbeatInterval);
+    childHeartbeatCount = 0;
+    childLog(`Heartbeat sender started. interval=${config.HEARTBEAT_INTERVAL_MS}ms`);
     heartbeatInterval = setInterval(() => {
+        childHeartbeatCount += 1;
+        if (childHeartbeatCount % 5 === 0) {
+            childLog(`Heartbeat sent (${childHeartbeatCount} total).`);
+        }
         network.broadcastToParents({ type: 'heartbeat', ts: Date.now() });
     }, config.HEARTBEAT_INTERVAL_MS);
 }
