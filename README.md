@@ -86,6 +86,7 @@ If direct peer connection fails on restrictive networks:
 - **Quiet output**: Raise device volume on parent.
 - **Unstable connection**: Refresh both devices and rejoin with the same join code.
 - **Echo**: Keep parent device out of the nursery.
+- **PeerJS failed to load**: App loads `vendor/peerjs.min.js` first, then falls back to `unpkg.com`. If both fail, check captive portal, VPN, DNS, and firewall.
 
 ## Development
 
@@ -95,6 +96,11 @@ The project uses a **native ES Module (No-Build)** architecture. This means you 
 # Example using npx
 npx serve
 ```
+
+### PeerJS Source of Truth
+
+- Runtime loads PeerJS from `vendor/peerjs.min.js` first, with CDN fallback to `https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js`.
+- Dependency is pinned as `peerjs@1.5.2` in `package.json` for provenance/version tracking.
 
 ### Architecture
 - `main.js`: Entry point that orchestrates role selection and application lifecycle.

@@ -33,9 +33,19 @@ let lastHeartbeatAt = 0;
 
 // Initialization
 function init() {
+    if (!isPeerJsAvailable()) return;
     restoreLastSession();
     attachEventListeners();
     updateConnectState();
+}
+
+function isPeerJsAvailable() {
+    if (typeof window.Peer !== 'undefined') return true;
+    ui.showScreen('landing');
+    elements.btnConnect.disabled = true;
+    utils.log('PeerJS failed to load from local vendor file and CDN fallback.', true);
+    alert('PeerJS failed to load from local vendor file and CDN fallback. Check local file serving, captive portal, VPN, DNS, or firewall.');
+    return false;
 }
 
 function restoreLastSession() {
@@ -191,7 +201,10 @@ async function initChildFlow() {
         onCall: handleIncomingCall,
         onConnection: handleIncomingDataConnection,
         onError: (err) => {
-            utils.log(`Network error: ${err.type}`, true);
+            utils.log(`Network error: ${err.type || 'unknown'} ${err.message ? `- ${err.message}` : ''}`, true);
+            if (err?.type === 'network' || err?.type === 'socket-error' || err?.type === 'server-error') {
+                utils.log('Signal server unreachable. Check captive portal/VPN/firewall or use a custom PeerJS host.', true);
+            }
             setStatusText('disconnected');
             setTimeout(() => location.reload(), 5000);
         },
@@ -269,7 +282,10 @@ function initParentFlow() {
             connectToChild();
         },
         onError: (err) => {
-            utils.log(`Network error: ${err.type}`, true);
+            utils.log(`Network error: ${err.type || 'unknown'} ${err.message ? `- ${err.message}` : ''}`, true);
+            if (err?.type === 'network' || err?.type === 'socket-error' || err?.type === 'server-error') {
+                utils.log('Signal server unreachable. Check captive portal/VPN/firewall or use a custom PeerJS host.', true);
+            }
             setStatusText('disconnected');
             retryParentConnection();
         },

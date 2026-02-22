@@ -1,5 +1,10 @@
 // Consolidated Configuration and Constants
 
+const runtime = typeof window !== 'undefined' ? window : globalThis;
+const runtimeCry = runtime?.CRY_CONFIG || {};
+const runtimeNetwork = runtime?.NETWORK_CONFIG || {};
+const runtimeTurn = runtime?.TURN_CONFIG || null;
+
 export const CRY_CONFIG = {
     sustainedSeconds: 1.5,
     minDbAboveNoise: 12,
@@ -7,13 +12,15 @@ export const CRY_CONFIG = {
     noiseFloorWindowSeconds: 8,
     noiseFloorUpdateMarginDb: 3,
     needsCareSustainedSeconds: 120,
-    nonCriticalStateMinHoldSeconds: 60
+    nonCriticalStateMinHoldSeconds: 60,
+    ...runtimeCry
 };
 
 export const NETWORK_CONFIG = {
     lowBandwidth: false,
     bitrateLevelsKbps: [32, 48, 64],
-    lowBandwidthLevelsKbps: [12, 24, 48]
+    lowBandwidthLevelsKbps: [12, 24, 48],
+    ...runtimeNetwork
 };
 
 export const BITRATE_LEVELS = (NETWORK_CONFIG.lowBandwidth ? NETWORK_CONFIG.lowBandwidthLevelsKbps : NETWORK_CONFIG.bitrateLevelsKbps)
@@ -23,16 +30,45 @@ export const BITRATE_DEFAULT_INDEX = Math.min(2, BITRATE_LEVELS.length - 1);
 export const BITRATE_STEP_DOWN_AFTER = 3; // consecutive bad intervals
 export const BITRATE_STEP_UP_AFTER = 4; // consecutive good intervals
 
-export const ICE_SERVERS = [
+const baseIceServers = [
     { urls: ['stun:stun.l.google.com:19302', 'stun:stun1.l.google.com:19302'] },
     { urls: ['stun:stun2.l.google.com:19302', 'stun:stun3.l.google.com:19302'] }
 ];
 
-export const PEER_CONFIG = {
+const turnIceServers = [];
+if (runtimeTurn) {
+    const turnEntries = Array.isArray(runtimeTurn) ? runtimeTurn : [runtimeTurn];
+    turnEntries.forEach((entry) => {
+        if (!entry || (!entry.urls && typeof entry !== 'string')) return;
+        if (typeof entry === 'string') {
+            turnIceServers.push({ urls: entry });
+            return;
+        }
+        turnIceServers.push({
+            urls: entry.urls,
+            username: entry.username,
+            credential: entry.credential
+        });
+    });
+}
+
+export const ICE_SERVERS = [...baseIceServers, ...turnIceServers];
+
+const basePeerConfig = {
     debug: 2,
     secure: true,
     config: {
         iceServers: ICE_SERVERS
+    }
+};
+
+const runtimePeer = runtime?.PEER_CONFIG || {};
+export const PEER_CONFIG = {
+    ...basePeerConfig,
+    ...runtimePeer,
+    config: {
+        ...basePeerConfig.config,
+        ...(runtimePeer.config || {})
     }
 };
 
